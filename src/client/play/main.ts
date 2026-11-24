@@ -380,6 +380,8 @@ async function setupXrButtons(): Promise<void> {
   ]);
   ui.vr.hidden = !vr;
   ui.ar.hidden = !ar;
+  xrSupport = { vr, ar };
+  seeThrough = ar && !isQuest;
   // sul Quest la VR è l'esperienza principale, sull'HoloLens l'AR
   const primary = vr && (isQuest || !ar) ? ui.vr : ar ? ui.ar : null;
   if (primary) {
@@ -390,6 +392,9 @@ async function setupXrButtons(): Promise<void> {
 }
 
 let xrBusy = false;
+/** Visore "trasparente" (HoloLens): supporta l'AR e non è un Quest. */
+let seeThrough = false;
+let xrSupport = { vr: false, ar: false };
 
 function xrError(kind: string, err: unknown): void {
   const e = err as Error;
@@ -409,20 +414,41 @@ async function enterXr(kind: "vr" | "ar"): Promise<void> {
   let session: XRSession | null = null;
   try {
     // requestSession va chiamato subito, finché vale il "gesto" dell'utente
-    session = await navigator.xr!.requestSession(kind === "vr" ? "immersive-vr" : "immersive-ar", {
+    const request = navigator.xr!.requestSession(kind === "vr" ? "immersive-vr" : "immersive-ar", {
       optionalFeatures: kind === "vr" ? ["local-floor", "bounded-floor", "hand-tracking"] : ["local-floor", "hand-tracking"],
     });
+    // su alcuni HoloLens la richiesta resta appesa per sempre: dopo 12 s lo diciamo
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      xrBusy = false;
+      ui.vr.disabled = ui.ar.disabled = false;
+      ui.xrNote.hidden = false;
+      ui.xrNote.textContent =
+        `Il visore non risponde alla richiesta ${kind.toUpperCase()}. ` +
+        (seeThrough && kind === "ar" ? "Prova ENTRA IN VR (sull'HoloLens è trasparente lo stesso). " : "") +
+        `Dati: ${navigator.userAgent.match(/Edg\/[\d.]+/)?.[0] ?? "browser ?"}, AR=${xrSupport.ar}, VR=${xrSupport.vr}.`;
+    }, 12000);
+    session = await request;
+    clearTimeout(timer);
+    if (timedOut) {
+      // arrivata troppo tardi: la chiudiamo per non bloccare i tentativi successivi
+      await session.end().catch(() => {});
+      return;
+    }
+    // sull'HoloLens anche la "VR" va disegnata come AR: niente cielo, oggetti a misura di stanza
+    const sceneMode: "vr" | "ar" = kind === "vr" && seeThrough ? "ar" : kind;
     // non tutti i visori hanno il pavimento: se manca si usa lo spazio "local"
     const space: XRReferenceSpaceType =
-      kind === "vr" && (await session.requestReferenceSpace("local-floor").then(() => true, () => false)) ? "local-floor" : "local";
+      sceneMode === "vr" && (await session.requestReferenceSpace("local-floor").then(() => true, () => false)) ? "local-floor" : "local";
     const name = cleanName(ui.name.value);
     if (name) pendingName = name;
-    platform = kind;
+    platform = seeThrough ? "ar" : kind;
     link.send({ t: "device:platform", platform });
     renderer.xr.setReferenceSpaceType(space);
     renderer.xr.setFoveation(1);
     await document.fonts.ready;
-    buildScene(kind);
+    buildScene(sceneMode);
     session.addEventListener("end", () => {
       if (game && (game.phase === "playing" || game.phase === "countdown")) game.forceEnd();
       platform = basePlatform;

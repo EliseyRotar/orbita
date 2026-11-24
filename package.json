@@ -1,0 +1,39 @@
+{
+  "name": "orbita",
+  "version": "1.0.0",
+  "description": "Space shooter WebXR per PC, Meta Quest e HoloLens 2 con classifica live su TV. Fiera dell'Orientamento 2026, ITI Marconi Dalmine 5BI.",
+  "scripts": {
+    "dev": "tsx src/server/index.ts --dev",
+    "build": "vite build",
+    "start": "tsx src/server/index.ts",
+    "fiera": "npm run build && npm start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "license": "MIT",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/qrcode": "^1.5.6",
+    "@types/three": "^0.187.0",
+    "@types/ws": "^8.18.2",
+    "iwer": "^2.8.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
+  },
+  "dependencies": {
+    "@fontsource/atkinson-hyperlegible": "^5.3.0",
+    "@fontsource/big-shoulders-display": "^5.3.0",
+    "qrcode": "^1.5.4",
+    "selfsigned": "^5.5.0",
+    "three": "^0.187.0",
+    "tsx": "^4.23.15",
+    "ws": "^8.23.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20.10"
+  }
+}

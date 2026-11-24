@@ -1,0 +1,11 @@
+{
+  "title": "Orbita",
+  "school": "ITI G. Marconi · Dalmine",
+  "course": "Informatica e Telecomunicazioni",
+  "qrUrl": "https://www.itisdalmine.edu.it",
+  "qrLabel": "Scopri il Marconi",
+  "httpPort": 8080,
+  "httpsPort": 8443,
+  "adminPin": "",
+  "dataDir": "data"
+}

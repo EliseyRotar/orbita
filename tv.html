@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Orbita · TV</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body class="tv">
+    <main class="board">
+      <header class="masthead">
+        <h1 class="wordmark">Orbita</h1>
+        <p class="tagline">Il gioco della 5BI. Fatti dare un visore e difendi la stazione.</p>
+        <div id="record" class="record"></div>
+      </header>
+
+      <section class="ranking" aria-labelledby="rank-title">
+        <h2 id="rank-title">Classifica di oggi</h2>
+        <ol id="leaderboard" class="leaderboard"></ol>
+      </section>
+
+      <section class="live" aria-labelledby="live-title">
+        <h2 id="live-title">In volo adesso</h2>
+        <ul id="devices" class="devices"></ul>
+      </section>
+
+      <section class="numbers" aria-labelledby="num-title">
+        <h2 id="num-title">I numeri di oggi</h2>
+        <dl id="totals" class="totals"></dl>
+        <dl id="platforms" class="platforms"></dl>
+      </section>
+
+      <aside class="school">
+        <div id="qr" class="qr" aria-hidden="true"></div>
+        <div>
+          <p id="qr-label" class="qr-label"></p>
+          <p id="school" class="school-name"></p>
+          <p id="course" class="course"></p>
+        </div>
+      </aside>
+
+      <footer class="feed">
+        <ul id="feed"></ul>
+      </footer>
+    </main>
+
+    <div id="takeover" class="takeover" hidden>
+      <p id="takeover-kicker" class="takeover-kicker">Nuovo record della fiera</p>
+      <p id="takeover-name" class="takeover-name"></p>
+      <p id="takeover-score" class="takeover-score"></p>
+    </div>
+
+    <p id="offline" class="offline" hidden>Server non raggiungibile: riconnessione in corso…</p>
+
+    <script type="module" src="/src/client/tv/main.ts"></script>
+  </body>
+</html>

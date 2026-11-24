@@ -1,0 +1,68 @@
+@import "@fontsource/big-shoulders-display/700";
+@import "@fontsource/big-shoulders-display/800";
+@import "@fontsource/atkinson-hyperlegible/400";
+@import "@fontsource/atkinson-hyperlegible/700";
+
+/*
+ * Token visivi di Orbita. Pensati per un padiglione fieristico luminoso:
+ * contrasto alto, numeri leggibili da lontano, niente grigi tenui.
+ */
+:root {
+  --deep: #0a1240;
+  --ultramarine: #16247a;
+  --ultramarine-2: #1d2f96;
+  --signal: #ffc53d;
+  --coral: #ff5d73;
+  --ice: #bfe7ff;
+  --paper: #f4f6ff;
+  --paper-dim: rgba(244, 246, 255, 0.62);
+  --line: rgba(191, 231, 255, 0.22);
+
+  --font-display: "Big Shoulders Display", "Arial Narrow", sans-serif;
+  --font-text: "Atkinson Hyperlegible", Arial, sans-serif;
+
+  --radius-s: 10px;
+  --radius-l: 22px;
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--deep);
+  color: var(--paper);
+  font-family: var(--font-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--signal);
+  outline-offset: 3px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

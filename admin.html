@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Orbita · Operatore</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body class="admin">
+    <header class="bar">
+      <h1>Orbita <span>operatore</span></h1>
+      <span id="conn" class="conn" data-online="false">Collegamento…</span>
+      <nav class="links">
+        <a href="/tv" target="_blank" rel="noopener">Apri la TV</a>
+        <a href="/" target="_blank" rel="noopener">Apri il gioco</a>
+      </nav>
+    </header>
+
+    <form id="pin-form" class="pin" hidden>
+      <label>PIN operatore <input id="pin" type="password" inputmode="numeric" autocomplete="off" /></label>
+      <button class="btn primary">Entra</button>
+      <p id="pin-error" class="error"></p>
+    </form>
+
+    <main id="app" class="layout">
+      <section class="col">
+        <h2>Postazioni</h2>
+        <p class="hint">Scrivi il nome del ragazzo e premi Invio: comparirà sul visore. Lui preme il grilletto e parte.</p>
+        <div id="devices" class="devices"></div>
+      </section>
+
+      <section class="col side">
+        <h2>Coda</h2>
+        <form id="queue-form" class="inline">
+          <input id="queue-name" maxlength="18" placeholder="Nome in coda" autocomplete="off" />
+          <button class="btn">Aggiungi</button>
+        </form>
+        <ol id="queue" class="queue"></ol>
+
+        <h2>Ultime partite</h2>
+        <p class="hint">Un nome inadatto? Correggilo o elimina la partita.</p>
+        <table class="games">
+          <thead>
+            <tr><th>Giocatore</th><th>Punti</th><th>Dove</th><th></th></tr>
+          </thead>
+          <tbody id="games"></tbody>
+        </table>
+
+        <h2>Messaggio sulla TV</h2>
+        <form id="info-form" class="inline">
+          <input id="info-text" maxlength="120" placeholder="Es. Alle 11 presentazione in sala B" autocomplete="off" />
+          <button class="btn">Pubblica</button>
+        </form>
+
+        <h2>Indirizzi</h2>
+        <p class="hint">Sui visori apri: <code id="play-url"></code><br />Al primo accesso il browser avvisa del certificato: scegli "Avanzate" e poi "Continua".</p>
+      </section>
+    </main>
+
+    <script type="module" src="/src/client/admin/main.ts"></script>
+  </body>
+</html>

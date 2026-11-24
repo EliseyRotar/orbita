@@ -3,6 +3,7 @@ import "./play.css";
 
 import * as THREE from "three";
 import { accuracy, cleanName, type Platform } from "../../shared/protocol.ts";
+import { instance, loadModels, loadSky, type Models } from "../common/assets.ts";
 import { Link } from "../common/net.ts";
 import { Sfx } from "./game/audio.ts";
 import { Game } from "./game/Game.ts";
@@ -34,6 +35,7 @@ const ua = navigator.userAgent;
 const isQuest = /OculusBrowser|Quest/i.test(ua);
 const isTouch = matchMedia("(pointer: coarse)").matches && !isQuest;
 const basePlatform: Platform = isTouch ? "mobile" : "desktop";
+const params = new URLSearchParams(location.search);
 
 let deviceId = store.get("orbita.deviceId");
 if (!deviceId) {
@@ -43,7 +45,7 @@ if (!deviceId) {
 const guessLabel = () => {
   const suffix = deviceId!.slice(0, 3).toUpperCase();
   if (isQuest) return `Quest ${suffix}`;
-  if (/Windows NT 10.*(ARM|HoloLens)|HoloLens/i.test(ua)) return `HoloLens ${suffix}`;
+  if (/HoloLens|Windows NT 10.*ARM/i.test(ua)) return `HoloLens ${suffix}`;
   if (isTouch) return `Telefono ${suffix}`;
   return `PC ${suffix}`;
 };
@@ -52,9 +54,53 @@ let platform: Platform = basePlatform;
 
 const link = new Link(() => ({ t: "hello", role: "device", deviceId: deviceId!, label, platform }));
 
-// ---------------- scena ----------------
+// ---------------- riferimenti DOM ----------------
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
+const SHIP_SVG = (color: string) =>
+  `<svg viewBox="0 0 8 8" aria-hidden="true" shape-rendering="crispEdges"><path d="M3 0h2v2h1v2h2v3H6V6H2v1H0V4h2V2h1z" fill="${color}"/></svg>`;
+
+const ui = {
+  loading: $("#loading"),
+  loadingText: $("#loading-text"),
+  loadingBar: $("#loading-bar"),
+  lobby: $("#lobby"),
+  over: $("#over"),
+  count: $("#countdown"),
+  hud: $("#hud"),
+  name: $<HTMLInputElement>("#player-name"),
+  play: $<HTMLButtonElement>("#btn-play"),
+  vr: $<HTMLButtonElement>("#btn-vr"),
+  ar: $<HTMLButtonElement>("#btn-ar"),
+  again: $<HTMLButtonElement>("#btn-again"),
+  mute: $<HTMLButtonElement>("#btn-mute"),
+  xrNote: $("#xr-note"),
+  status: $("#status"),
+  label: $<HTMLInputElement>("#device-label"),
+  player: $("#hud-player"),
+  score: $("#hud-score"),
+  lives: $("#hud-lives"),
+  combo: $("#hud-combo"),
+  wave: $("#hud-wave"),
+  powers: $("#hud-powers"),
+  toast: $("#toast"),
+  boss: $("#hud-boss"),
+  bossBar: $("#hud-boss-bar"),
+  hurt: $("#hurt"),
+  crosshair: $("#crosshair"),
+  res: {
+    who: $("#res-who"),
+    score: $("#res-score"),
+    rank: $("#res-rank"),
+    kills: $("#res-kills"),
+    enemies: $("#res-enemies"),
+    acc: $("#res-acc"),
+    combo: $("#res-combo"),
+  },
+};
+
+// ---------------- scena ----------------
+
 const stage = $("#stage");
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -63,24 +109,29 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.xr.enabled = true;
 stage.appendChild(renderer.domElement);
 
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.02, 400);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.02, 800);
 camera.position.set(0, 1.6, 0);
 
 const sfx = new Sfx();
-let scene!: THREE.Scene;
-let game!: Game;
+let models!: Models;
+let sky: THREE.Texture | null = null;
+let scene = new THREE.Scene();
+let game: Game | null = null;
 let env: THREE.Group | null = null;
 let hud: HudPanel | null = null;
 let card: CardPanel | null = null;
+let pendingName: string | null = null;
+let watched = false;
+/** Rotazione del modello della pistola per avere la canna lungo -Z. */
+const GUN_YAW = Number(params.get("gunyaw") ?? 0);
 const controllers: { obj: THREE.Group; held: boolean; pressed: boolean; ray: THREE.Object3D }[] = [];
 
 function buildScene(mode: Mode): void {
   scene = new THREE.Scene();
   const ar = mode === "ar";
   if (!ar) {
-    scene.background = new THREE.Color(C.deep);
-    scene.fog = new THREE.Fog(C.deep, 60, 220);
-    env = buildEnvironment();
+    scene.background = new THREE.Color(C.black);
+    env = buildEnvironment(sky, models);
     scene.add(env);
   } else {
     scene.background = null;
@@ -89,13 +140,18 @@ function buildScene(mode: Mode): void {
   addLights(scene, ar);
   scene.add(camera);
 
-  game = new Game(mode, sfx, {
-    onStart: (player) => link.send({ t: "game:start", player }),
-    onTick: (score, lives, combo, wave) => link.send({ t: "game:tick", score, lives, combo, wave }),
-    onEvent: (kind, text) => link.send({ t: "game:event", kind, text }),
-    onEnd: (stats) => link.send({ t: "game:end", stats }),
-    onAbort: () => link.send({ t: "game:abort" }),
-  });
+  game = new Game(
+    mode,
+    sfx,
+    {
+      onStart: (player) => link.send({ t: "game:start", player }),
+      onTick: (score, lives, combo, wave) => link.send({ t: "game:tick", score, lives, combo, wave }),
+      onEvent: (kind, text) => link.send({ t: "game:event", kind, text }),
+      onEnd: (stats) => link.send({ t: "game:end", stats }),
+      onAbort: () => link.send({ t: "game:abort" }),
+    },
+    models,
+  );
   game.online = link.online;
   game.setNextPlayer(pendingName);
   scene.add(game.root);
@@ -111,11 +167,11 @@ function buildScene(mode: Mode): void {
       const len = ar ? 2 : 6;
       const ray = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -len)]),
-        new THREE.LineBasicMaterial({ color: C.signal, transparent: true, opacity: 0.7 }),
+        new THREE.LineBasicMaterial({ color: C.green, transparent: true, opacity: 0.75 }),
       );
       const tip = new THREE.Mesh(
-        new THREE.RingGeometry(ar ? 0.008 : 0.03, ar ? 0.014 : 0.05, 24),
-        new THREE.MeshBasicMaterial({ color: C.signal, side: THREE.DoubleSide }),
+        new THREE.RingGeometry(ar ? 0.008 : 0.03, ar ? 0.014 : 0.05, 4),
+        new THREE.MeshBasicMaterial({ color: C.green, side: THREE.DoubleSide }),
       );
       tip.position.z = -len;
       ray.add(tip);
@@ -135,73 +191,53 @@ function buildScene(mode: Mode): void {
       obj.addEventListener("selectend", () => (entry.held = false));
       scene.add(obj);
       controllers.push(entry);
+
+      // in VR il controller diventa una pistola laser (Kenney Space Kit), allineata al raggio di mira
+      if (mode === "vr") {
+        const gun = instance(models, "gun");
+        gun.scale.setScalar(0.11);
+        gun.rotation.y = GUN_YAW;
+        gun.position.set(0, -0.04, 0.02);
+        obj.add(gun);
+      }
     }
   }
 }
-
-let mode: Mode = isTouch ? "mobile" : "desktop";
-let pendingName: string | null = null;
-buildScene(mode);
-
-// ---------------- interfaccia DOM (PC / telefono) ----------------
-
-const ui = {
-  lobby: $("#lobby"),
-  over: $("#over"),
-  count: $("#countdown"),
-  hud: $("#hud"),
-  name: $<HTMLInputElement>("#player-name"),
-  play: $<HTMLButtonElement>("#btn-play"),
-  vr: $<HTMLButtonElement>("#btn-vr"),
-  ar: $<HTMLButtonElement>("#btn-ar"),
-  again: $<HTMLButtonElement>("#btn-again"),
-  xrNote: $("#xr-note"),
-  status: $("#status"),
-  label: $<HTMLInputElement>("#device-label"),
-  score: $("#hud-score"),
-  lives: $("#hud-lives"),
-  combo: $("#hud-combo"),
-  wave: $("#hud-wave"),
-  powers: $("#hud-powers"),
-  toast: $("#toast"),
-  boss: $("#hud-boss"),
-  bossBar: $("#hud-boss-bar"),
-  hurt: $("#hurt"),
-  crosshair: $("#crosshair"),
-  res: {
-    who: $("#res-who"),
-    score: $("#res-score"),
-    rank: $("#res-rank"),
-    kills: $("#res-kills"),
-    acc: $("#res-acc"),
-    combo: $("#res-combo"),
-    wave: $("#res-wave"),
-  },
-};
 
 // ---------------- rete ----------------
 
 link.onStatus((online) => {
   if (game) game.online = online;
   ui.status.dataset.online = String(online);
-  ui.status.textContent = online ? `Collegato · ${label}` : "Non collegato al server";
+  ui.status.textContent = online ? `collegato come ${label}` : "server non collegato";
 });
 
 link.on((msg) => {
   switch (msg.t) {
     case "assign":
       pendingName = msg.name;
-      game.setNextPlayer(msg.name);
+      game?.setNextPlayer(msg.name);
       if (msg.name && document.activeElement !== ui.name) ui.name.value = msg.name;
       break;
     case "stop":
-      game.forceEnd();
+      game?.forceEnd();
       break;
     case "rank":
-      game.setRank(msg.rankToday, msg.rankAll, msg.isRecord);
+      game?.setRank(msg.rankToday, msg.rankAll, msg.isRecord);
+      break;
+    case "watch":
+      watched = msg.on;
       break;
   }
 });
+
+// fotogrammi per il monitor spettatore, solo quando qualcuno guarda
+setInterval(() => {
+  if (!watched || !game) return;
+  if (game.phase === "playing" || game.phase === "countdown") link.send({ t: "game:frame", frame: game.frame() });
+}, 100);
+
+// ---------------- interfaccia DOM (PC / telefono) ----------------
 
 ui.label.value = label;
 ui.label.addEventListener("change", () => {
@@ -209,10 +245,17 @@ ui.label.addEventListener("change", () => {
   ui.label.value = label;
   store.set("orbita.label", label);
   link.send({ t: "device:label", label });
-  ui.status.textContent = `Collegato · ${label}`;
+  ui.status.textContent = `collegato come ${label}`;
+});
+
+ui.mute.addEventListener("click", () => {
+  sfx.toggleMute();
+  ui.mute.textContent = sfx.muted ? "audio: no" : "audio: si";
+  ui.mute.setAttribute("aria-pressed", String(sfx.muted));
 });
 
 function startDesktop(): void {
+  if (!game) return;
   sfx.unlock();
   const name = cleanName(ui.name.value);
   if (name) game.setNextPlayer(name);
@@ -234,6 +277,8 @@ const set = (el: HTMLElement, text: string) => {
 const show = (el: HTMLElement, on: boolean) => {
   if (el.hidden === on) el.hidden = !on;
 };
+const pad = (n: number) => String(Math.max(0, Math.floor(n))).padStart(6, "0");
+let livesShown = -1;
 
 function renderDom(vm: ViewModel): void {
   const xr = renderer.xr.isPresenting;
@@ -245,36 +290,41 @@ function renderDom(vm: ViewModel): void {
   document.body.dataset.phase = vm.phase;
 
   if (vm.phase === "countdown") set(ui.count, String(Math.max(1, vm.countdown)));
-  set(ui.score, String(vm.score));
-  set(ui.wave, `Ondata ${vm.wave}`);
+  set(ui.player, `1UP ${vm.player.toUpperCase()}`);
+  set(ui.score, pad(vm.score));
+  set(ui.wave, `ONDATA ${vm.wave}`);
   set(ui.combo, `x${vm.combo}`);
   ui.combo.dataset.hot = String(vm.combo > 1);
-  set(ui.lives, "▲".repeat(Math.max(0, vm.lives)) + "△".repeat(Math.max(0, 5 - vm.lives)));
-  set(ui.powers, vm.powers.map((p) => (p.total ? `${POWER_LABEL[p.kind]} ${Math.ceil(p.left)}s` : POWER_LABEL[p.kind])).join("   "));
+  if (livesShown !== vm.lives) {
+    livesShown = vm.lives;
+    ui.lives.innerHTML = Array.from({ length: 5 }, (_, i) => SHIP_SVG(i < vm.lives ? "#FF3D7F" : "#333")).join("");
+    ui.lives.setAttribute("aria-label", `${vm.lives} vite`);
+  }
+  set(ui.powers, vm.powers.map((p) => (p.total ? `${POWER_LABEL[p.kind]} ${Math.ceil(p.left)}s` : POWER_LABEL[p.kind])).join("   ").toUpperCase());
   set(ui.toast, vm.toast ?? "");
   ui.toast.dataset.on = String(!!vm.toast);
   show(ui.boss, !!vm.boss);
   if (vm.boss) ui.bossBar.style.transform = `scaleX(${vm.boss.hp / vm.boss.max})`;
-  ui.hurt.style.opacity = String(Math.min(1, game.hurt));
+  ui.hurt.style.opacity = String(Math.min(1, game?.hurt ?? 0));
 
   if (vm.phase === "lobby" && vm.nextPlayer && document.activeElement !== ui.name && !ui.name.value) {
     ui.name.value = vm.nextPlayer;
   }
   if (vm.phase === "over" && vm.result) {
     const r = vm.result;
-    set(ui.res.who, `Bel volo, ${r.player}`);
-    set(ui.res.score, String(r.stats.score));
+    set(ui.res.who, `bel volo, ${r.player}`);
+    set(ui.res.score, pad(r.stats.score));
     set(
       ui.res.rank,
-      r.isRecord ? "Nuovo record della fiera!" : r.rankToday ? `${r.rankToday}° posto nella classifica di oggi` : link.online ? "Salvataggio in classifica…" : "Offline: punteggio non salvato",
+      r.isRecord ? "NUOVO RECORD DELLA FIERA!" : r.rankToday ? `${r.rankToday}° POSTO DI OGGI` : link.online ? "SALVATAGGIO..." : "OFFLINE: NON SALVATO",
     );
     ui.res.rank.dataset.record = String(r.isRecord);
     set(ui.res.kills, String(r.stats.kills));
+    set(ui.res.enemies, String(r.stats.enemies));
     set(ui.res.acc, `${Math.round(accuracy(r.stats) * 100)}%`);
     set(ui.res.combo, `x${r.stats.maxCombo}`);
-    set(ui.res.wave, String(r.stats.wave));
     ui.again.disabled = vm.lockout > 0;
-    set(ui.again, vm.nextPlayer ? `Gioca: ${vm.nextPlayer}` : "Nuova partita");
+    set(ui.again, vm.nextPlayer ? `GIOCA: ${vm.nextPlayer.toUpperCase()}` : "NUOVA PARTITA");
   }
 }
 
@@ -284,13 +334,13 @@ const pointer = new THREE.Vector2(0, 0);
 const mouseAim: Aimer = { origin: new THREE.Vector3(), dir: new THREE.Vector3(), held: false, pressed: false };
 const raycaster = new THREE.Raycaster();
 
-renderer.domElement.addEventListener("pointermove", (e) => {
+const movePointer = (e: PointerEvent) => {
   pointer.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
   ui.crosshair.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
-});
+};
+renderer.domElement.addEventListener("pointermove", movePointer);
 renderer.domElement.addEventListener("pointerdown", (e) => {
-  pointer.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
-  ui.crosshair.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+  movePointer(e);
   sfx.unlock();
   mouseAim.held = true;
   mouseAim.pressed = true;
@@ -303,7 +353,7 @@ window.addEventListener("keydown", (e) => {
     if (!mouseAim.held) mouseAim.pressed = true;
     mouseAim.held = true;
   }
-  if (e.code === "KeyM") sfx.muted = !sfx.muted;
+  if (e.code === "KeyM") ui.mute.click();
 });
 window.addEventListener("keyup", (e) => {
   if (e.code === "Space") mouseAim.held = false;
@@ -319,7 +369,7 @@ window.addEventListener("resize", () => {
 async function setupXrButtons(): Promise<void> {
   if (!window.isSecureContext) {
     ui.xrNote.hidden = false;
-    ui.xrNote.textContent = "Per giocare con il visore apri l'indirizzo https:// mostrato dal server.";
+    ui.xrNote.textContent = "Per il visore apri l'indirizzo https:// mostrato dal server.";
     return;
   }
   const xr = navigator.xr;
@@ -330,10 +380,13 @@ async function setupXrButtons(): Promise<void> {
   ]);
   ui.vr.hidden = !vr;
   ui.ar.hidden = !ar;
-  // sul Quest la VR è l'esperienza principale; sull'HoloLens l'AR
-  if (vr && ar && isQuest) ui.vr.classList.add("primary");
-  else if (ar) ui.ar.classList.add("primary");
-  else if (vr) ui.vr.classList.add("primary");
+  // sul Quest la VR è l'esperienza principale, sull'HoloLens l'AR
+  const primary = vr && (isQuest || !ar) ? ui.vr : ar ? ui.ar : null;
+  if (primary) {
+    primary.classList.add("primary");
+    ui.play.classList.remove("primary");
+    primary.parentElement!.prepend(primary);
+  }
 }
 
 async function enterXr(kind: "vr" | "ar"): Promise<void> {
@@ -348,12 +401,11 @@ async function enterXr(kind: "vr" | "ar"): Promise<void> {
     session = await navigator.xr!.requestSession(kind === "vr" ? "immersive-vr" : "immersive-ar", sessionInit);
   } catch (err) {
     ui.xrNote.hidden = false;
-    ui.xrNote.textContent = `Impossibile avviare la sessione ${kind.toUpperCase()}: ${(err as Error).message}`;
+    ui.xrNote.textContent = `Impossibile avviare la ${kind.toUpperCase()}: ${(err as Error).message}`;
     return;
   }
   const name = cleanName(ui.name.value);
   if (name) pendingName = name;
-  mode = kind;
   platform = kind;
   link.send({ t: "device:platform", platform });
   renderer.xr.setReferenceSpaceType(kind === "vr" ? "local-floor" : "local");
@@ -361,13 +413,12 @@ async function enterXr(kind: "vr" | "ar"): Promise<void> {
   buildScene(kind);
   await renderer.xr.setSession(session);
   session.addEventListener("end", () => {
-    if (game.phase === "playing" || game.phase === "countdown") game.forceEnd();
-    mode = basePlatform === "mobile" ? "mobile" : "desktop";
+    if (game && (game.phase === "playing" || game.phase === "countdown")) game.forceEnd();
     platform = basePlatform;
     link.send({ t: "device:platform", platform });
     camera.position.set(0, 1.6, 0);
     camera.rotation.set(0, 0, 0);
-    buildScene(mode);
+    buildScene(isTouch ? "mobile" : "desktop");
   });
 }
 
@@ -375,7 +426,6 @@ ui.vr.addEventListener("click", () => void enterXr("vr"));
 ui.ar.addEventListener("click", () => void enterXr("ar"));
 
 // Con ?emulate nell'indirizzo si simula un Meta Quest 3 (VR + AR) per provare senza visore.
-const params = new URLSearchParams(location.search);
 let emulator: unknown = null;
 if (params.has("emulate")) {
   const { XRDevice, metaQuest3 } = await import("iwer");
@@ -383,20 +433,42 @@ if (params.has("emulate")) {
   device.installRuntime({ forceInstall: true });
   emulator = device;
 }
+
+// ---------------- caricamento ----------------
+
+try {
+  const [m, s] = await Promise.all([
+    loadModels((done, total) => {
+      ui.loadingText.textContent = `CARICAMENTO ${done}/${total}`;
+      ui.loadingBar.style.width = `${(done / total) * 100}%`;
+    }),
+    loadSky().catch(() => null),
+  ]);
+  models = m;
+  sky = s;
+} catch (err) {
+  ui.loadingText.textContent = "Errore nel caricamento dei modelli: ricarica la pagina";
+  throw err;
+}
+await document.fonts.load('20px "Press Start 2P"').catch(() => {});
+buildScene(isTouch ? "mobile" : "desktop");
+ui.loading.hidden = true;
 void setupXrButtons();
 
 // ---------------- ciclo principale ----------------
 
-const clock = new THREE.Clock();
+const timer = new THREE.Timer();
 const headPos = new THREE.Vector3();
 const headDir = new THREE.Vector3();
 const headQuat = new THREE.Quaternion();
 let sway = 0;
 
-renderer.setAnimationLoop(() => {
-  const dt = Math.min(0.05, clock.getDelta());
+renderer.setAnimationLoop((time) => {
+  timer.update(time);
+  const dt = Math.min(0.05, timer.getDelta());
   const xr = renderer.xr.isPresenting;
   const aimers: Aimer[] = [];
+  if (!game) return;
 
   if (xr) {
     const xrCam = renderer.xr.getCamera();
@@ -427,14 +499,15 @@ renderer.setAnimationLoop(() => {
     mouseAim.pressed = false;
   }
 
-  game.update(dt, headPos, aimers);
+  game.update(dt, headPos, headDir, aimers);
   const vm = game.view();
+  const playing = vm.phase === "playing" || vm.phase === "countdown";
+  sfx.setMusic(playing ? "game" : "lobby", game.bossActive);
 
   if (hud && card) {
-    const playing = vm.phase === "playing";
-    hud.mesh.visible = playing;
-    card.mesh.visible = !playing;
-    if (playing) {
+    hud.mesh.visible = vm.phase === "playing";
+    card.mesh.visible = vm.phase !== "playing";
+    if (vm.phase === "playing") {
       hud.update(vm);
       hud.place(headPos, headQuat, dt);
     } else {
@@ -442,13 +515,12 @@ renderer.setAnimationLoop(() => {
       card.place(headPos, headQuat, dt);
     }
   }
-  if (env) env.rotation.y += dt * 0.004;
   renderDom(vm);
   renderer.render(scene, camera);
 });
 
 // ---------------- debug (solo con ?debug nell'indirizzo) ----------------
 
-if (new URLSearchParams(location.search).has("debug")) {
+if (params.has("debug")) {
   Object.assign(window, { orbita: { game: () => game, camera, THREE, emulator, renderer } });
 }

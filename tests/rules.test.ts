@@ -26,6 +26,13 @@ describe("regole di gioco", () => {
     expect([1, 2, 3, 4, 5, 8].map(R.isBossWave)).toEqual([false, false, false, true, false, true]);
   });
 
+  it("i nemici arrivano dalla seconda ondata, al massimo 4", () => {
+    expect(R.maxEnemies(1)).toBe(0);
+    expect(R.maxEnemies(2)).toBe(2);
+    expect(R.maxEnemies(20)).toBe(4);
+    expect(R.enemyFireInterval(50)).toBeGreaterThanOrEqual(1.5);
+  });
+
   it("all'inizio escono quasi solo asteroidi piccoli", () => {
     let i = 0;
     const seq = [0.5, 0.9];

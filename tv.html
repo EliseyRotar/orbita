@@ -3,55 +3,54 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Orbita · TV</title>
+    <title>Orbita · Classifica</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
   <body class="tv">
     <main class="board">
-      <header class="masthead">
-        <h1 class="wordmark">Orbita</h1>
-        <p class="tagline">Il gioco della 5BI. Fatti dare un visore e difendi la stazione.</p>
-        <div id="record" class="record"></div>
-      </header>
-
-      <section class="ranking" aria-labelledby="rank-title">
-        <h2 id="rank-title">Classifica di oggi</h2>
+      <section class="scores" aria-labelledby="hs-title">
+        <h1 class="logo">ORBITA</h1>
+        <h2 id="hs-title" class="hs-title">HIGH SCORES · OGGI</h2>
+        <div class="hs-head" aria-hidden="true"><span>POS</span><span>NOME</span><span>PUNTI</span><span>VIA</span></div>
         <ol id="leaderboard" class="leaderboard"></ol>
       </section>
 
-      <section class="live" aria-labelledby="live-title">
-        <h2 id="live-title">In volo adesso</h2>
-        <ul id="devices" class="devices"></ul>
-      </section>
+      <aside class="side">
+        <div id="record" class="record"></div>
 
-      <section class="numbers" aria-labelledby="num-title">
-        <h2 id="num-title">I numeri di oggi</h2>
+        <section aria-labelledby="live-title">
+          <h2 id="live-title" class="side-title">IN VOLO ADESSO</h2>
+          <ul id="devices" class="devices"></ul>
+        </section>
+
         <dl id="totals" class="totals"></dl>
-        <dl id="platforms" class="platforms"></dl>
-      </section>
 
-      <aside class="school">
-        <div id="qr" class="qr" aria-hidden="true"></div>
-        <div>
-          <p id="qr-label" class="qr-label"></p>
-          <p id="school" class="school-name"></p>
-          <p id="course" class="course"></p>
+        <section aria-labelledby="duel-title">
+          <h2 id="duel-title" class="side-title">SFIDA TRA DISPOSITIVI</h2>
+          <ol id="duel" class="duel"></ol>
+        </section>
+
+        <div class="school">
+          <div id="qr" class="qr" aria-hidden="true"></div>
+          <div>
+            <p id="qr-label" class="qr-label"></p>
+            <p id="school" class="school-name"></p>
+            <p id="course" class="course"></p>
+          </div>
         </div>
       </aside>
 
-      <footer class="feed">
-        <ul id="feed"></ul>
-      </footer>
+      <footer class="feed"><ul id="feed"></ul></footer>
     </main>
 
     <div id="takeover" class="takeover" hidden>
-      <p id="takeover-kicker" class="takeover-kicker">Nuovo record della fiera</p>
+      <p id="takeover-kicker" class="takeover-kicker">NUOVO RECORD DELLA FIERA</p>
       <p id="takeover-name" class="takeover-name"></p>
       <p id="takeover-score" class="takeover-score"></p>
     </div>
 
-    <p id="offline" class="offline" hidden>Server non raggiungibile: riconnessione in corso…</p>
-
+    <p id="offline" class="offline" hidden>SERVER NON RAGGIUNGIBILE · RICONNESSIONE...</p>
+    <div class="scanlines" aria-hidden="true"></div>
     <script type="module" src="/src/client/tv/main.ts"></script>
   </body>
 </html>

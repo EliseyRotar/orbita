@@ -1,5 +1,5 @@
 /**
- * Protocollo WebSocket condiviso tra server, postazioni di gioco, TV e pannello operatore.
+ * Protocollo WebSocket condiviso tra server, postazioni di gioco, monitor, spettatore e operatore.
  * Tutti i messaggi sono JSON con un campo `t` (tipo).
  */
 
@@ -9,6 +9,8 @@ export type DeviceStatus = "idle" | "ready" | "playing" | "over";
 export interface GameStats {
   score: number;
   kills: number;
+  /** Navicelle nemiche abbattute. */
+  enemies: number;
   shots: number;
   hits: number;
   maxCombo: number;
@@ -64,6 +66,7 @@ export interface Totals {
   shots: number;
   hits: number;
   bosses: number;
+  enemies: number;
   playMs: number;
   bestByPlatform: Partial<Record<Platform, { player: string; score: number }>>;
 }
@@ -92,11 +95,36 @@ export interface Snapshot {
   config: PublicConfig;
 }
 
+/**
+ * Fotogramma per lo spettatore: posizioni nel sistema di riferimento della partita
+ * (x = destra, y = su, z = avanti, in unità di gioco, già divise per la scala AR).
+ * Ogni entità: [id, tipo, x, y, z, rotazione].
+ */
+export type EntityKind = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+export const ENT = { small: 0, medium: 1, large: 2, gold: 3, enemy: 4, mine: 5, bolt: 6 } as const;
+export type FrameEntity = [id: number, kind: EntityKind, x: number, y: number, z: number, rot: number];
+
+export interface GameFrame {
+  /** Testa del giocatore: posizione e direzione dello sguardo. */
+  head: [x: number, y: number, z: number, dx: number, dy: number, dz: number];
+  ents: FrameEntity[];
+  boss: [x: number, y: number, z: number, hp: number, max: number] | null;
+  score: number;
+  lives: number;
+  combo: number;
+  wave: number;
+}
+
+export interface SpectatorFrame extends GameFrame {
+  deviceId: string;
+}
+
 // ---------- client -> server ----------
 
 export type HelloMsg =
   | { t: "hello"; role: "device"; deviceId: string; label: string; platform: Platform }
   | { t: "hello"; role: "tv" }
+  | { t: "hello"; role: "spectator" }
   | { t: "hello"; role: "admin"; pin?: string };
 
 export type DeviceMsg =
@@ -106,7 +134,10 @@ export type DeviceMsg =
   | { t: "game:tick"; score: number; lives: number; combo: number; wave: number }
   | { t: "game:event"; kind: FeedKind; text: string }
   | { t: "game:end"; stats: GameStats }
-  | { t: "game:abort" };
+  | { t: "game:abort" }
+  | { t: "game:frame"; frame: GameFrame };
+
+export type SpectatorMsg = { t: "spectate:select"; deviceId: string | null };
 
 export type AdminMsg =
   | { t: "admin:assign"; deviceId: string; name: string }
@@ -121,16 +152,21 @@ export type AdminMsg =
   | { t: "admin:game:rename"; id: string; player: string }
   | { t: "admin:feed:info"; text: string };
 
-export type ClientMsg = HelloMsg | DeviceMsg | AdminMsg;
+export type ClientMsg = HelloMsg | DeviceMsg | AdminMsg | SpectatorMsg;
 
 // ---------- server -> client ----------
 
 export type ServerMsg =
   | { t: "snapshot"; data: Snapshot }
-  | { t: "welcome"; role: "device" | "tv" | "admin" }
+  | { t: "welcome"; role: "device" | "tv" | "admin" | "spectator" }
   | { t: "denied"; reason: string }
   | { t: "assign"; name: string | null }
   | { t: "stop" }
+  /** Al dispositivo: qualcuno lo sta guardando, manda (o smetti di mandare) i fotogrammi. */
+  | { t: "watch"; on: boolean }
+  | { t: "frame"; data: SpectatorFrame }
+  /** Allo spettatore: quale postazione sta seguendo adesso. */
+  | { t: "following"; deviceId: string | null }
   | { t: "rank"; gameId: string; rankToday: number; rankAll: number; isRecord: boolean };
 
 export const MAX_NAME_LEN = 18;

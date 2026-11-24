@@ -12,6 +12,7 @@ export default defineConfig({
         index: resolve(import.meta.dirname, "index.html"),
         tv: resolve(import.meta.dirname, "tv.html"),
         admin: resolve(import.meta.dirname, "admin.html"),
+        spectator: resolve(import.meta.dirname, "spectator.html"),
       },
     },
   },

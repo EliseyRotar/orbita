@@ -33,7 +33,13 @@ const hub = new Hub(store, () => publicConfig, cfg.adminPin);
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 let handler: Handler;
 
-const PAGES: Record<string, string> = { "/": "index.html", "/tv": "tv.html", "/admin": "admin.html" };
+const PAGES: Record<string, string> = {
+  "/": "index.html",
+  "/tv": "tv.html",
+  "/monitor": "tv.html",
+  "/spettatore": "spectator.html",
+  "/admin": "admin.html",
+};
 
 if (DEV) {
   const { createServer } = await import("vite");
@@ -66,6 +72,10 @@ if (DEV) {
     ".woff": "font/woff",
     ".json": "application/json",
     ".ico": "image/x-icon",
+    ".jpg": "image/jpeg",
+    ".glb": "model/gltf-binary",
+    ".ogg": "audio/ogg",
+    ".mp3": "audio/mpeg",
   };
   handler = (req, res) => {
     const path = decodeURIComponent((req.url ?? "/").split("?")[0]!);
@@ -75,10 +85,12 @@ if (DEV) {
       res.writeHead(404, { "content-type": "text/plain" }).end("Not found");
       return;
     }
+    // i bundle in assets/ hanno l'hash nel nome; i media cambiano di rado
     const immutable = rel.startsWith("assets/");
+    const media = rel.startsWith("media/");
     res.writeHead(200, {
       "content-type": TYPES[extname(file)] ?? "application/octet-stream",
-      "cache-control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
+      "cache-control": immutable ? "public, max-age=31536000, immutable" : media ? "public, max-age=3600" : "no-cache",
     });
     createReadStream(file).pipe(res);
   };
@@ -118,7 +130,8 @@ httpsServer.listen(cfg.httpsPort, "0.0.0.0");
 
 const line = "─".repeat(60);
 console.log(`\n${line}\n  Orbita ${DEV ? "(sviluppo)" : ""} è attivo\n${line}`);
-console.log(`  TV (su questo PC):     http://localhost:${cfg.httpPort}/tv`);
+console.log(`  Monitor classifica:    http://localhost:${cfg.httpPort}/monitor`);
+console.log(`  Monitor spettatore:    http://localhost:${cfg.httpPort}/spettatore`);
 console.log(`  Operatore:             http://localhost:${cfg.httpPort}/admin`);
 console.log(`  Gioco su questo PC:    http://localhost:${cfg.httpPort}/`);
 for (const ip of ips) console.log(`  Visori / altri PC:     https://${ip}:${cfg.httpsPort}/`);

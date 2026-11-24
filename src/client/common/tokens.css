@@ -1,28 +1,23 @@
-@import "@fontsource/big-shoulders-display/700";
-@import "@fontsource/big-shoulders-display/800";
-@import "@fontsource/atkinson-hyperlegible/400";
-@import "@fontsource/atkinson-hyperlegible/700";
+@import "@fontsource/press-start-2p/400";
+@import "@fontsource/vt323/400";
 
 /*
- * Token visivi di Orbita. Pensati per un padiglione fieristico luminoso:
- * contrasto alto, numeri leggibili da lontano, niente grigi tenui.
+ * Token visivi di Orbita, direzione "Cabinato": sala giochi anni '80.
+ * Nero pieno, quattro colori saturi, font pixel per titoli e numeri,
+ * VT323 (terminale) per i testi. Leggibile da qualche metro sui monitor 27-32".
  */
 :root {
-  --deep: #0a1240;
-  --ultramarine: #16247a;
-  --ultramarine-2: #1d2f96;
-  --signal: #ffc53d;
-  --coral: #ff5d73;
-  --ice: #bfe7ff;
-  --paper: #f4f6ff;
-  --paper-dim: rgba(244, 246, 255, 0.62);
-  --line: rgba(191, 231, 255, 0.22);
+  --black: #000000;
+  --yellow: #ffe14d;
+  --pink: #ff3d7f;
+  --cyan: #3df2ff;
+  --green: #7cff4d;
+  --white: #f2f2f2;
+  --grey: #8a8a8a;
+  --dim: #333333;
 
-  --font-display: "Big Shoulders Display", "Arial Narrow", sans-serif;
-  --font-text: "Atkinson Hyperlegible", Arial, sans-serif;
-
-  --radius-s: 10px;
-  --radius-l: 22px;
+  --pixel: "Press Start 2P", monospace;
+  --term: VT323, monospace;
 
   color-scheme: dark;
 }
@@ -37,10 +32,11 @@ html,
 body {
   margin: 0;
   height: 100%;
-  background: var(--deep);
-  color: var(--paper);
-  font-family: var(--font-text);
-  -webkit-font-smoothing: antialiased;
+  background: var(--black);
+  color: var(--white);
+  font-family: var(--term);
+  font-size: 24px;
+  -webkit-font-smoothing: none;
 }
 
 button,
@@ -50,12 +46,62 @@ input {
 }
 
 :focus-visible {
-  outline: 3px solid var(--signal);
-  outline-offset: 3px;
+  outline: 4px solid var(--yellow);
+  outline-offset: 4px;
 }
 
 [hidden] {
   display: none !important;
+}
+
+/* Linee di scansione del monitor CRT, sopra tutto ma non cliccabili. */
+.scanlines {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.22) 0 2px, transparent 2px 4px);
+}
+
+.btn {
+  min-height: 60px;
+  padding: 0 24px;
+  font-family: var(--pixel);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--cyan);
+  background: var(--black);
+  border: 4px solid var(--cyan);
+  border-radius: 0;
+  box-shadow: 6px 6px 0 var(--dim);
+}
+.btn:hover {
+  color: var(--black);
+  background: var(--cyan);
+}
+.btn:active {
+  transform: translate(4px, 4px);
+  box-shadow: 2px 2px 0 var(--dim);
+}
+.btn.primary {
+  color: var(--black);
+  background: var(--yellow);
+  border-color: var(--yellow);
+  box-shadow: 6px 6px 0 var(--pink);
+}
+.btn:disabled {
+  opacity: 0.35;
+  cursor: wait;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+.blink {
+  animation: blink 1.1s steps(1) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -63,6 +109,7 @@ input {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
 }

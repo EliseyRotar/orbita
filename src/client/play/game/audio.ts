@@ -1,11 +1,32 @@
 /**
- * Effetti sonori sintetizzati con WebAudio: nessun file da scaricare,
- * funziona offline e dentro le sessioni WebXR.
+ * Audio del gioco: effetti dei pacchetti Kenney "Sci-fi Sounds" e "Interface Sounds" (CC0)
+ * e due brani CC0 da OpenGameArt. Gli effetti sono decodificati in memoria (WebAudio),
+ * la musica è in streaming (HTMLAudioElement) per non occupare RAM sull'HoloLens.
  */
+
+const SFX = {
+  shoot: ["laserSmall_000", "laserSmall_001", "laserSmall_002"],
+  enemyShoot: ["laserRetro_002"],
+  hit: ["impactMetal_001", "impactMetal_003"],
+  explode: ["explosionCrunch_000", "explosionCrunch_001", "explosionCrunch_002"],
+  bigExplode: ["lowFrequency_explosion_000"],
+  shield: ["forceField_001"],
+  power: ["confirmation_002"],
+  combo: ["maximize_006"],
+  damage: ["error_006"],
+  start: ["select_005"],
+  alarm: ["glitch_003"],
+} as const;
+
+type SfxName = keyof typeof SFX;
+
 export class Sfx {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
-  private noise: AudioBuffer | null = null;
+  private buffers = new Map<string, AudioBuffer>();
+  private music: HTMLAudioElement | null = null;
+  private musicTrack: "lobby" | "game" | null = null;
+  private loading: Promise<void> | null = null;
   muted = false;
 
   /** Va chiamato dentro un gesto dell'utente (click, tap, grilletto). */
@@ -15,76 +36,107 @@ export class Sfx {
       if (!Ctx) return;
       this.ctx = new Ctx();
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.5;
+      this.master.gain.value = 0.7;
       this.master.connect(this.ctx.destination);
-      const len = this.ctx.sampleRate;
-      this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-      const d = this.noise.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      this.loading = this.loadAll();
     }
     if (this.ctx.state === "suspended") void this.ctx.resume();
+    if (this.music?.paused && !this.muted) void this.music.play().catch(() => {});
   }
 
-  private tone(freq: number, to: number, dur: number, type: OscillatorType, vol: number, delay = 0): void {
-    const ctx = this.ctx;
-    if (!ctx || !this.master || this.muted) return;
-    const t = ctx.currentTime + delay;
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, t);
-    osc.frequency.exponentialRampToValueAtTime(Math.max(20, to), t + dur);
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    osc.connect(g).connect(this.master);
-    osc.start(t);
-    osc.stop(t + dur + 0.02);
+  private async loadAll(): Promise<void> {
+    const ctx = this.ctx!;
+    const names = new Set(Object.values(SFX).flat());
+    await Promise.all(
+      [...names].map(async (n) => {
+        try {
+          const res = await fetch(`/media/sfx/${n}.ogg`);
+          this.buffers.set(n, await ctx.decodeAudioData(await res.arrayBuffer()));
+        } catch {
+          /* un suono mancante non deve bloccare il gioco */
+        }
+      }),
+    );
   }
 
-  private burst(dur: number, vol: number, cutoff: number): void {
-    const ctx = this.ctx;
-    if (!ctx || !this.master || !this.noise || this.muted) return;
-    const t = ctx.currentTime;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noise;
-    const f = ctx.createBiquadFilter();
-    f.type = "lowpass";
-    f.frequency.setValueAtTime(cutoff, t);
-    f.frequency.exponentialRampToValueAtTime(80, t + dur);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f).connect(g).connect(this.master);
-    src.start(t, Math.random() * 0.5);
-    src.stop(t + dur);
+  private play(name: SfxName, vol = 1, rate = 1): void {
+    if (!this.ctx || !this.master || this.muted) return;
+    const list = SFX[name];
+    const buf = this.buffers.get(list[Math.floor(Math.random() * list.length)]!);
+    if (!buf) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate * (0.96 + Math.random() * 0.08);
+    const g = this.ctx.createGain();
+    g.gain.value = vol;
+    src.connect(g).connect(this.master);
+    src.start();
   }
 
   shoot(): void {
-    this.tone(1400, 380, 0.09, "square", 0.05);
+    this.play("shoot", 0.35);
+  }
+  enemyShoot(): void {
+    this.play("enemyShoot", 0.35);
   }
   hit(): void {
-    this.tone(520, 260, 0.06, "triangle", 0.12);
+    this.play("hit", 0.45);
   }
   explode(big = false): void {
-    this.burst(big ? 0.9 : 0.35, big ? 0.7 : 0.35, big ? 2200 : 3200);
+    if (big) this.play("bigExplode", 1);
+    else this.play("explode", 0.6);
   }
   damage(): void {
-    this.tone(180, 50, 0.5, "sawtooth", 0.25);
-    this.burst(0.4, 0.4, 900);
+    this.play("damage", 0.8);
+    this.play("bigExplode", 0.6, 1.4);
   }
   power(): void {
-    [0, 0.07, 0.14].forEach((d, i) => this.tone(660 * (1 + i * 0.26), 990 * (1 + i * 0.26), 0.12, "sine", 0.18, d));
+    this.play("power", 0.8);
+    this.play("shield", 0.4, 1.3);
+  }
+  shieldHit(): void {
+    this.play("shield", 0.7);
   }
   combo(level: number): void {
-    this.tone(440 + level * 110, 880 + level * 110, 0.15, "triangle", 0.15);
+    this.play("combo", 0.6, 0.9 + level * 0.08);
   }
   bossAlarm(): void {
-    for (let i = 0; i < 3; i++) this.tone(300, 600, 0.25, "sawtooth", 0.12, i * 0.35);
+    this.play("alarm", 0.8);
+    setTimeout(() => this.play("alarm", 0.8), 450);
   }
   start(): void {
-    [0, 0.1, 0.2].forEach((d, i) => this.tone(392 * 2 ** (i * 4 / 12), 392 * 2 ** (i * 4 / 12), 0.14, "square", 0.08, d));
+    this.play("start", 0.8);
   }
   over(): void {
-    [0, 0.18, 0.36].forEach((d, i) => this.tone(330 / (1 + i * 0.2), 220 / (1 + i * 0.2), 0.3, "triangle", 0.15, d));
+    this.play("damage", 0.8, 0.7);
+  }
+
+  /** Musica: "lobby" in attesa, "game" durante la partita (più veloce durante il boss). */
+  setMusic(track: "lobby" | "game" | null, intense = false): void {
+    if (track !== this.musicTrack) {
+      this.musicTrack = track;
+      this.music?.pause();
+      this.music = null;
+      if (track) {
+        const a = new Audio(track === "game" ? "/media/music/game.mp3" : "/media/music/lobby.ogg");
+        a.loop = true;
+        a.volume = track === "game" ? 0.32 : 0.4;
+        this.music = a;
+        if (this.ctx && !this.muted) void a.play().catch(() => {});
+      }
+    }
+    if (this.music) this.music.playbackRate = intense ? 1.08 : 1;
+  }
+
+  toggleMute(): void {
+    this.muted = !this.muted;
+    if (this.music) {
+      if (this.muted) this.music.pause();
+      else void this.music.play().catch(() => {});
+    }
+  }
+
+  get ready(): Promise<void> {
+    return this.loading ?? Promise.resolve();
   }
 }

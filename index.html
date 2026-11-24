@@ -3,80 +3,91 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0A1240" />
+    <meta name="theme-color" content="#000000" />
     <title>Orbita</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
   <body data-phase="lobby">
     <div id="stage"></div>
     <div id="hurt" aria-hidden="true"></div>
-    <div id="crosshair" aria-hidden="true" hidden></div>
+    <div id="crosshair" aria-hidden="true" hidden><i></i><i></i><i></i><i></i></div>
 
-    <section id="lobby" class="lobby">
-      <div class="lobby-copy">
-        <h1 class="wordmark">Orbita</h1>
-        <p class="lead">Gli asteroidi puntano dritti alla stazione. Hai tre vite: colpiscili prima che arrivino.</p>
-      </div>
+    <div id="loading" class="loading">
+      <p class="loading-title">ORBITA</p>
+      <p id="loading-text" class="loading-text">CARICAMENTO...</p>
+      <div class="loading-bar"><div id="loading-bar"></div></div>
+    </div>
+
+    <section id="lobby" class="lobby" hidden>
+      <h1 class="logo">ORBITA</h1>
+      <p class="tagline">Gli asteroidi puntano dritti alla stazione. Hai 3 vite.</p>
 
       <form class="launch" onsubmit="return false">
         <label class="field">
-          <span>Nome del pilota</span>
-          <input id="player-name" maxlength="18" autocomplete="off" spellcheck="false" placeholder="Scrivi il tuo nome" />
+          <span>NOME DEL PILOTA</span>
+          <input id="player-name" maxlength="18" autocomplete="off" spellcheck="false" placeholder="scrivi il tuo nome" />
         </label>
         <div class="actions">
-          <button id="btn-play" type="button" class="btn primary">Gioca qui</button>
-          <button id="btn-vr" type="button" class="btn" hidden>Entra in VR</button>
-          <button id="btn-ar" type="button" class="btn" hidden>Entra in AR</button>
+          <button id="btn-play" type="button" class="btn primary">GIOCA</button>
+          <button id="btn-vr" type="button" class="btn" hidden>ENTRA IN VR</button>
+          <button id="btn-ar" type="button" class="btn" hidden>ENTRA IN AR</button>
         </div>
         <p id="xr-note" class="note" hidden></p>
-        <ul class="howto">
-          <li><b>Mira</b> con il mouse o il dito</li>
-          <li><b>Spara</b> con click, tap o barra spaziatrice</li>
-          <li><b>Asteroidi dorati</b> danno potenziamenti</li>
-        </ul>
       </form>
+
+      <dl class="howto">
+        <div><dt>MIRA</dt><dd>mouse, dito, controller o mano</dd></div>
+        <div><dt>SPARA</dt><dd>click, tap, spazio, grilletto o pizzico</dd></div>
+        <div><dt class="g">CRISTALLI</dt><dd>colpiscili per un potenziamento</dd></div>
+        <div><dt class="p">NAVICELLE</dt><dd>sparano plasma rosa: colpiscilo al volo</dd></div>
+      </dl>
+      <p class="insert blink">PREMI GIOCA PER INIZIARE</p>
     </section>
 
     <div id="countdown" class="countdown" hidden>3</div>
 
     <header id="hud" class="hud" hidden>
-      <div class="hud-score">
-        <output id="hud-score">0</output>
-        <span id="hud-wave">Ondata 1</span>
+      <div class="hud-left">
+        <span id="hud-player" class="hud-player">1UP</span>
+        <output id="hud-score" class="hud-score">000000</output>
+        <span id="hud-wave" class="hud-wave">ONDATA 1</span>
       </div>
       <div class="hud-right">
         <span id="hud-lives" class="lives" aria-label="Vite"></span>
         <span id="hud-combo" class="combo">x1</span>
+        <span id="hud-powers" class="powers"></span>
       </div>
       <div id="hud-boss" class="boss" hidden>
-        <span>Boss</span>
+        <span>BOSS</span>
         <div class="boss-track"><div id="hud-boss-bar"></div></div>
       </div>
-      <p id="hud-powers" class="powers"></p>
     </header>
     <p id="toast" class="toast" data-on="false" aria-live="polite"></p>
 
     <section id="over" class="over" hidden>
+      <p class="go">GAME OVER</p>
       <p id="res-who" class="who"></p>
-      <output id="res-score" class="big-score">0</output>
+      <output id="res-score" class="big-score">000000</output>
       <p id="res-rank" class="rank"></p>
       <dl class="stats">
-        <div><dt>Asteroidi</dt><dd id="res-kills">0</dd></div>
-        <div><dt>Precisione</dt><dd id="res-acc">0%</dd></div>
-        <div><dt>Combo massima</dt><dd id="res-combo">x1</dd></div>
-        <div><dt>Ondata</dt><dd id="res-wave">1</dd></div>
+        <div><dt>ASTEROIDI</dt><dd id="res-kills">0</dd></div>
+        <div><dt>NEMICI</dt><dd id="res-enemies">0</dd></div>
+        <div><dt>PRECISIONE</dt><dd id="res-acc">0%</dd></div>
+        <div><dt>COMBO MAX</dt><dd id="res-combo">x1</dd></div>
       </dl>
-      <button id="btn-again" type="button" class="btn primary">Nuova partita</button>
+      <button id="btn-again" type="button" class="btn primary">NUOVA PARTITA</button>
     </section>
 
     <footer class="device">
-      <span id="status" class="status" data-online="false">Collegamento…</span>
+      <span id="status" class="status" data-online="false">collegamento...</span>
       <label class="device-label">
-        <span>Postazione</span>
+        <span>postazione</span>
         <input id="device-label" maxlength="18" />
       </label>
+      <button id="btn-mute" type="button" class="mute" aria-pressed="false">audio: si</button>
     </footer>
 
+    <div class="scanlines" aria-hidden="true"></div>
     <script type="module" src="/src/client/play/main.ts"></script>
   </body>
 </html>

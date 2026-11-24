@@ -83,11 +83,12 @@ export class Store {
   }
 
   totals(day: string | null): Totals {
-    const t: Totals = { games: 0, kills: 0, shots: 0, hits: 0, bosses: 0, playMs: 0, bestByPlatform: {} };
+    const t: Totals = { games: 0, kills: 0, enemies: 0, shots: 0, hits: 0, bosses: 0, playMs: 0, bestByPlatform: {} };
     for (const g of this.games) {
       if (day !== null && g.day !== day) continue;
       t.games++;
       t.kills += g.kills;
+      t.enemies += g.enemies ?? 0;
       t.shots += g.shots;
       t.hits += g.hits;
       t.bosses += g.bosses;

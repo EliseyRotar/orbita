@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import type { GameStats } from "../../../shared/protocol.ts";
+import { ENT, type EntityKind, type FrameEntity, type GameFrame, type GameStats } from "../../../shared/protocol.ts";
+import { instance, type Models } from "../../common/assets.ts";
 import type { Sfx } from "./audio.ts";
 import { Sparks } from "./fx.ts";
 import { C } from "./palette.ts";
@@ -17,8 +18,9 @@ import {
 } from "./types.ts";
 
 interface Rock {
+  id: number;
   kind: R.RockKind;
-  mesh: THREE.Mesh;
+  obj: THREE.Object3D;
   vel: THREE.Vector3;
   spin: THREE.Vector3;
   hp: number;
@@ -26,7 +28,20 @@ interface Rock {
   flash: number;
 }
 
+interface Enemy {
+  id: number;
+  obj: THREE.Object3D;
+  hp: number;
+  t: number;
+  az: number;
+  el: number;
+  phase: number;
+  fireIn: number;
+  flash: number;
+}
+
 interface Bolt {
+  id: number;
   mesh: THREE.Mesh;
   vel: THREE.Vector3;
   life: number;
@@ -34,6 +49,7 @@ interface Bolt {
 }
 
 interface Mine {
+  id: number;
   mesh: THREE.Mesh;
   vel: THREE.Vector3;
   alive: boolean;
@@ -41,7 +57,7 @@ interface Mine {
 
 interface Boss {
   group: THREE.Group;
-  core: THREE.Mesh;
+  ring: THREE.Mesh;
   hp: number;
   max: number;
   index: number;
@@ -53,49 +69,40 @@ interface Boss {
 
 const COUNTDOWN = 2.4;
 const OVER_LOCK = 3;
+const ENEMY_LIFETIME = 16;
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
-
-function makeRockGeometry(seed: number): THREE.BufferGeometry {
-  const g = new THREE.IcosahedronGeometry(1, 1);
-  const p = g.attributes.position as THREE.BufferAttribute;
-  // spostamento coerente per vertici coincidenti (niente buchi tra le facce)
-  const offsets = new Map<string, number>();
-  for (let i = 0; i < p.count; i++) {
-    const key = `${p.getX(i).toFixed(3)},${p.getY(i).toFixed(3)},${p.getZ(i).toFixed(3)}`;
-    let k = offsets.get(key);
-    if (k === undefined) {
-      k = 0.78 + 0.4 * Math.abs(Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453 % 1);
-      offsets.set(key, k);
-    }
-    p.setXYZ(i, p.getX(i) * k, p.getY(i) * k, p.getZ(i) * k);
-  }
-  g.computeVertexNormals();
-  return g;
-}
+const ROCK_MODEL: Record<R.RockKind, "meteor" | "meteorB" | "crystal"> = {
+  small: "meteorB",
+  medium: "meteor",
+  large: "meteor",
+  gold: "crystal",
+};
+const ENEMY_MODELS = ["enemyA", "enemyB", "enemyC"] as const;
 
 /**
  * Logica di gioco comune a tutte le modalità. Riceve i "puntatori" (mouse,
- * controller, mani) e la posizione della testa; produce un ViewModel per l'interfaccia.
+ * controller, mani) e la posizione della testa; produce un ViewModel per l'interfaccia
+ * e, quando qualcuno guarda dal monitor spettatore, i fotogrammi da trasmettere.
  */
 export class Game {
   readonly root = new THREE.Group();
   readonly scale: number;
   private sparks: Sparks;
-  private rockGeos: THREE.BufferGeometry[];
-  private rockMats: Record<R.RockKind, THREE.MeshLambertMaterial>;
   private boltGeo: THREE.BufferGeometry;
   private boltMat: THREE.MeshBasicMaterial;
   private mineGeo: THREE.BufferGeometry;
-  private mineMat: THREE.MeshLambertMaterial;
+  private mineMat: THREE.MeshBasicMaterial;
   private shieldBubble: THREE.Mesh;
   private hurtBubble: THREE.Mesh;
 
   private rocks: Rock[] = [];
+  private enemies: Enemy[] = [];
   private bolts: Bolt[] = [];
   private mines: Mine[] = [];
   private boss: Boss | null = null;
+  private nextId = 1;
 
   phase: Phase = "lobby";
   player = "Ospite";
@@ -111,6 +118,7 @@ export class Game {
   private comboT = 0;
   private maxCombo = 1;
   private kills = 0;
+  private enemyKills = 0;
   private shots = 0;
   private hits = 0;
   private bossesBeaten = 0;
@@ -130,45 +138,35 @@ export class Game {
   private forward = new THREE.Vector3(0, 0, -1);
   private right = new THREE.Vector3(1, 0, 0);
   private head = new THREE.Vector3(0, 1.6, 0);
+  private headDir = new THREE.Vector3(0, 0, -1);
 
   constructor(
     readonly mode: Mode,
     private readonly sfx: Sfx,
     private readonly cb: GameCallbacks,
+    private readonly models: Models,
   ) {
     const ar = mode === "ar";
     this.scale = ar ? 0.2 : 1;
     const s = this.scale;
 
-    this.sparks = new Sparks(ar ? 0.03 : 0.18);
+    this.sparks = new Sparks(ar ? 0.025 : 0.13);
     this.root.add(this.sparks.object);
 
-    this.rockGeos = [1, 2, 3, 4, 5].map(makeRockGeometry);
-    // in AR il display è additivo: i colori scuri diventano trasparenti, quindi più luce
-    const glow = ar ? 0.35 : 0.08;
-    const rockMat = (color: number, emissive: number) =>
-      new THREE.MeshLambertMaterial({ color, emissive, emissiveIntensity: 1, flatShading: true });
-    this.rockMats = {
-      small: rockMat(C.rock, new THREE.Color(C.rock).multiplyScalar(glow).getHex()),
-      medium: rockMat(0x9c86b8, new THREE.Color(0x9c86b8).multiplyScalar(glow).getHex()),
-      large: rockMat(C.rockDark, new THREE.Color(C.ice).multiplyScalar(glow * 0.8).getHex()),
-      gold: rockMat(C.signal, 0x8a5a00),
-    };
-
-    this.boltGeo = new THREE.CapsuleGeometry(0.07 * s, 1.1 * s, 2, 6).rotateX(Math.PI / 2);
-    this.boltMat = new THREE.MeshBasicMaterial({ color: C.signal });
-    this.mineGeo = new THREE.OctahedronGeometry(0.5 * s, 0);
-    this.mineMat = new THREE.MeshLambertMaterial({ color: C.coral, emissive: 0x7a1020, flatShading: true });
+    this.boltGeo = new THREE.BoxGeometry(0.09 * s, 0.09 * s, 1.4 * s);
+    this.boltMat = new THREE.MeshBasicMaterial({ color: C.cyan });
+    this.mineGeo = new THREE.OctahedronGeometry(0.45 * s, 0);
+    this.mineMat = new THREE.MeshBasicMaterial({ color: C.pink });
 
     this.shieldBubble = new THREE.Mesh(
-      new THREE.SphereGeometry(0.9 * s, 24, 16),
-      new THREE.MeshBasicMaterial({ color: C.ice, transparent: true, opacity: 0.12, side: THREE.BackSide, depthWrite: false }),
+      new THREE.SphereGeometry(0.9 * s, 20, 12),
+      new THREE.MeshBasicMaterial({ color: C.cyan, transparent: true, opacity: 0.14, side: THREE.BackSide, depthWrite: false, wireframe: true }),
     );
     this.shieldBubble.visible = false;
     this.root.add(this.shieldBubble);
     this.hurtBubble = new THREE.Mesh(
       new THREE.SphereGeometry(0.6 * s, 16, 12),
-      new THREE.MeshBasicMaterial({ color: C.coral, transparent: true, opacity: 0, side: THREE.BackSide, depthWrite: false, depthTest: false }),
+      new THREE.MeshBasicMaterial({ color: C.pink, transparent: true, opacity: 0, side: THREE.BackSide, depthWrite: false, depthTest: false }),
     );
     this.hurtBubble.renderOrder = 999;
     this.root.add(this.hurtBubble);
@@ -205,8 +203,9 @@ export class Game {
 
   // ---------------- ciclo ----------------
 
-  update(dt: number, headPos: THREE.Vector3, aimers: Aimer[]): void {
+  update(dt: number, headPos: THREE.Vector3, headDir: THREE.Vector3, aimers: Aimer[]): void {
     this.head.copy(headPos);
+    this.headDir.copy(headDir);
     this.sparks.update(dt);
     this.updateEffects(dt);
 
@@ -215,7 +214,7 @@ export class Game {
       if (this.countdown <= 0) {
         this.phase = "playing";
         this.startedAt = performance.now();
-        this.showToast("Ondata 1");
+        this.showToast("ONDATA 1");
       }
     } else if (this.phase === "over") {
       this.overT += dt;
@@ -223,7 +222,6 @@ export class Game {
 
     if (this.phase === "playing") this.play(dt, aimers);
     else {
-      // asteroidi residui continuano a volare via dopo il game over
       this.moveRocks(dt, false);
       this.moveBolts(dt);
     }
@@ -253,6 +251,7 @@ export class Game {
     this.comboT = 0;
     this.maxCombo = 1;
     this.kills = 0;
+    this.enemyKills = 0;
     this.shots = 0;
     this.hits = 0;
     this.bossesBeaten = 0;
@@ -267,19 +266,18 @@ export class Game {
   private play(dt: number, aimers: Aimer[]): void {
     const slow = this.hasPower("slow") ? 0.45 : 1;
 
-    // ondate
     this.waveT += dt;
     if (!this.boss && this.waveT >= R.WAVE_SECONDS) this.nextWave();
 
-    // generazione asteroidi
     this.spawnIn -= dt;
     const interval = R.spawnInterval(this.wave) * (this.boss ? 3 : 1);
-    if (this.spawnIn <= 0 && this.rocks.length < R.maxRocks(this.wave)) {
-      this.spawnRock(R.pickRock(this.wave));
+    if (this.spawnIn <= 0) {
+      const wantEnemy = !this.boss && this.enemies.length < R.maxEnemies(this.wave) && Math.random() < R.enemyChance(this.wave);
+      if (wantEnemy) this.spawnEnemy();
+      else if (this.rocks.length < R.maxRocks(this.wave)) this.spawnRock(R.pickRock(this.wave));
       this.spawnIn = interval * (0.7 + Math.random() * 0.6);
     }
 
-    // sparo
     this.fireCd -= dt;
     for (const a of aimers) {
       if (a.pressed || (a.held && this.fireCd <= 0)) {
@@ -290,16 +288,15 @@ export class Game {
 
     this.moveBolts(dt);
     this.moveRocks(dt * slow, true);
+    this.updateEnemies(dt * slow);
     this.updateBoss(dt * slow);
     this.moveMines(dt * slow);
 
-    // combo
     if (this.streak > 0) {
       this.comboT -= dt;
       if (this.comboT <= 0) this.streak = 0;
     }
 
-    // potenziamenti a tempo
     for (const p of this.powers) if (p.total > 0) p.left -= dt;
     this.powers = this.powers.filter((p) => p.total === 0 || p.left > 0);
 
@@ -315,10 +312,10 @@ export class Game {
     this.waveT = 0;
     if (R.isBossWave(this.wave)) {
       this.spawnBoss();
-      this.showToast("Boss in arrivo!");
+      this.showToast("BOSS IN ARRIVO!");
       this.sfx.bossAlarm();
     } else {
-      this.showToast(`Ondata ${this.wave}`);
+      this.showToast(`ONDATA ${this.wave}`);
     }
   }
 
@@ -333,21 +330,23 @@ export class Game {
       .addScaledVector(UP, Math.sin(el));
   }
 
+  private get desktop(): boolean {
+    return this.mode === "desktop" || this.mode === "mobile";
+  }
+
   private spawnRock(kind: R.RockKind, at?: THREE.Vector3, size?: number): void {
     const s = this.scale;
     const spec = R.ROCK[kind];
-    const desktop = this.mode === "desktop" || this.mode === "mobile";
-    const az = (Math.random() * 2 - 1) * (desktop ? 0.62 : 0.95);
-    const el = desktop ? -0.12 + Math.random() * 0.42 : -0.1 + Math.random() * 0.55;
+    const az = (Math.random() * 2 - 1) * (this.desktop ? 0.62 : 0.95);
+    const el = this.desktop ? -0.12 + Math.random() * 0.42 : -0.1 + Math.random() * 0.55;
     const pos = at
       ? at.clone()
       : this.dirFrom(az, el, new THREE.Vector3()).multiplyScalar(R.SPAWN_DISTANCE * s).add(this.anchor);
     const radius = (size ?? spec.radius) * s;
-    const mesh = new THREE.Mesh(this.rockGeos[Math.floor(Math.random() * this.rockGeos.length)], this.rockMats[kind]);
-    mesh.position.copy(pos);
-    mesh.scale.setScalar(radius);
-    mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
-    // mira verso la testa con un piccolo scarto, così non arrivano tutti nello stesso punto
+    const obj = instance(this.models, ROCK_MODEL[kind]);
+    obj.position.copy(pos);
+    obj.scale.setScalar(radius);
+    obj.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
     const target = v1
       .copy(this.head)
       .addScaledVector(this.right, (Math.random() - 0.5) * 0.9 * s)
@@ -355,32 +354,32 @@ export class Game {
     const vel = target.sub(pos).normalize().multiplyScalar(R.rockSpeed(this.wave) * spec.speed * s);
     if (at) vel.addScaledVector(this.right, (Math.random() - 0.5) * 3 * s);
     this.rocks.push({
+      id: this.nextId++,
       kind,
-      mesh,
+      obj,
       vel: vel.clone(),
       spin: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(2.2),
       hp: spec.hp,
       radius,
       flash: 0,
     });
-    this.root.add(mesh);
+    this.root.add(obj);
   }
 
   private moveRocks(dt: number, harmful: boolean): void {
     const s = this.scale;
     for (let i = this.rocks.length - 1; i >= 0; i--) {
       const r = this.rocks[i]!;
-      r.mesh.position.addScaledVector(r.vel, dt);
-      r.mesh.rotation.x += r.spin.x * dt;
-      r.mesh.rotation.y += r.spin.y * dt;
+      r.obj.position.addScaledVector(r.vel, dt);
+      r.obj.rotation.x += r.spin.x * dt;
+      r.obj.rotation.y += r.spin.y * dt;
       if (r.flash > 0) {
         r.flash -= dt;
-        r.mesh.scale.setScalar(r.radius * (1 + Math.max(0, r.flash) * 1.5));
+        r.obj.scale.setScalar(r.radius * (1 + Math.max(0, r.flash) * 1.8));
       }
-      const d = r.mesh.position.distanceTo(this.head);
-      const passed = v2.copy(r.mesh.position).sub(this.anchor).dot(this.forward) < -3 * s;
+      const d = r.obj.position.distanceTo(this.head);
+      const passed = v2.copy(r.obj.position).sub(this.anchor).dot(this.forward) < -3 * s;
       if (harmful && d < R.HIT_RADIUS * s + r.radius * 0.5) {
-        this.sparks.burst(r.mesh.position, C.coral, 30, 6 * s);
         this.removeRock(i);
         this.takeDamage();
       } else if (passed || d > 60 * s) {
@@ -391,8 +390,83 @@ export class Game {
 
   private removeRock(i: number): void {
     const r = this.rocks[i]!;
-    this.root.remove(r.mesh);
+    this.root.remove(r.obj);
     this.rocks.splice(i, 1);
+  }
+
+  private spawnEnemy(): void {
+    const s = this.scale;
+    const obj = instance(this.models, ENEMY_MODELS[Math.floor(Math.random() * ENEMY_MODELS.length)]!);
+    obj.scale.setScalar(R.ENEMY.radius * s);
+    const e: Enemy = {
+      id: this.nextId++,
+      obj,
+      hp: R.ENEMY.hp,
+      t: 0,
+      az: (Math.random() * 2 - 1) * (this.desktop ? 0.45 : 0.7),
+      el: 0.05 + Math.random() * (this.desktop ? 0.2 : 0.35),
+      phase: Math.random() * Math.PI * 2,
+      fireIn: 2.5 + Math.random(),
+      flash: 0,
+    };
+    this.placeEnemy(e);
+    this.enemies.push(e);
+    this.root.add(obj);
+  }
+
+  /** Volo: arriva da lontano, si ferma a media distanza ondeggiando, poi se ne va. */
+  private placeEnemy(e: Enemy): void {
+    const s = this.scale;
+    const arrive = Math.min(1, e.t / 5);
+    const leave = Math.max(0, (e.t - ENEMY_LIFETIME + 3) / 3);
+    const dist = (40 - 24 * (1 - (1 - arrive) ** 2) + 30 * leave * leave) * s;
+    const az = e.az + Math.sin(e.t * 0.7 + e.phase) * 0.28;
+    const el = e.el + Math.sin(e.t * 1.1 + e.phase) * 0.06;
+    e.obj.position.copy(this.dirFrom(az, el, v1).multiplyScalar(dist).add(this.anchor));
+    e.obj.lookAt(this.head);
+    // i modelli Kenney hanno il muso verso -Z: lookAt punta +Z, quindi si girano
+    e.obj.rotateY(Math.PI);
+    e.obj.rotateZ(Math.sin(e.t * 0.7 + e.phase) * 0.5);
+  }
+
+  private updateEnemies(dt: number): void {
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const e = this.enemies[i]!;
+      e.t += dt;
+      this.placeEnemy(e);
+      if (e.flash > 0) {
+        e.flash -= dt;
+        e.obj.scale.setScalar(R.ENEMY.radius * this.scale * (1 + Math.max(0, e.flash) * 1.5));
+      }
+      e.fireIn -= dt;
+      if (e.fireIn <= 0 && e.t > 3 && e.t < ENEMY_LIFETIME - 3) {
+        e.fireIn = R.enemyFireInterval(this.wave);
+        this.spawnMine(e.obj.position, 6);
+        this.sfx.enemyShoot();
+      }
+      if (e.t > ENEMY_LIFETIME) {
+        this.root.remove(e.obj);
+        this.enemies.splice(i, 1);
+      }
+    }
+  }
+
+  private damageEnemy(i: number): void {
+    const e = this.enemies[i]!;
+    e.hp--;
+    e.flash = 0.08;
+    if (e.hp > 0) {
+      this.sfx.hit();
+      this.sparks.burst(e.obj.position, C.yellow, 8, 3 * this.scale);
+      return;
+    }
+    this.sparks.burst(e.obj.position, C.yellow, 50, 9 * this.scale);
+    this.sparks.burst(e.obj.position, C.white, 30, 5 * this.scale);
+    this.sfx.explode(true);
+    this.root.remove(e.obj);
+    this.enemies.splice(i, 1);
+    this.enemyKills++;
+    this.registerKill(R.ENEMY.points);
   }
 
   private fire(a: Aimer): void {
@@ -403,10 +477,11 @@ export class Game {
       if (ang !== 0) dir.applyAxisAngle(UP, ang).normalize();
       let bolt = this.bolts.find((b) => !b.alive);
       if (!bolt) {
-        bolt = { mesh: new THREE.Mesh(this.boltGeo, this.boltMat), vel: new THREE.Vector3(), life: 0, alive: false };
+        bolt = { id: 0, mesh: new THREE.Mesh(this.boltGeo, this.boltMat), vel: new THREE.Vector3(), life: 0, alive: false };
         this.bolts.push(bolt);
         this.root.add(bolt.mesh);
       }
+      bolt.id = this.nextId++;
       bolt.alive = true;
       bolt.mesh.visible = true;
       bolt.life = 1.1;
@@ -444,33 +519,40 @@ export class Game {
   private boltHits(p0: THREE.Vector3, p1: THREE.Vector3): boolean {
     const seg = v2.copy(p1).sub(p0);
     const len2 = seg.lengthSq();
+    const tmp = new THREE.Vector3();
     const hitSphere = (c: THREE.Vector3, rad: number) => {
-      const t = len2 > 0 ? Math.max(0, Math.min(1, new THREE.Vector3().subVectors(c, p0).dot(seg) / len2)) : 0;
+      const t = len2 > 0 ? Math.max(0, Math.min(1, tmp.subVectors(c, p0).dot(seg) / len2)) : 0;
       const cx = p0.x + seg.x * t - c.x;
       const cy = p0.y + seg.y * t - c.y;
       const cz = p0.z + seg.z * t - c.z;
       return cx * cx + cy * cy + cz * cz <= rad * rad;
     };
+    const s = this.scale;
 
-    for (let i = 0; i < this.mines.length; i++) {
-      const m = this.mines[i]!;
-      if (m.alive && hitSphere(m.mesh.position, 0.75 * this.scale)) {
-        this.sparks.burst(m.mesh.position, C.coral, 18, 5 * this.scale);
+    for (const m of this.mines) {
+      if (m.alive && hitSphere(m.mesh.position, 0.8 * s)) {
+        this.sparks.burst(m.mesh.position, C.pink, 18, 5 * s);
         this.killMine(m);
         this.award(15);
         this.sfx.hit();
         return true;
       }
     }
+    for (let i = 0; i < this.enemies.length; i++) {
+      if (hitSphere(this.enemies[i]!.obj.position, R.ENEMY.radius * s * 1.25)) {
+        this.damageEnemy(i);
+        return true;
+      }
+    }
     for (let i = 0; i < this.rocks.length; i++) {
       const r = this.rocks[i]!;
       // un po' di tolleranza: aiuta chi non ha mai giocato in VR
-      if (hitSphere(r.mesh.position, r.radius * 1.35)) {
+      if (hitSphere(r.obj.position, r.radius * 1.35)) {
         this.damageRock(i);
         return true;
       }
     }
-    if (this.boss && hitSphere(this.boss.core.getWorldPosition(new THREE.Vector3()), 2.4 * this.scale)) {
+    if (this.boss && hitSphere(this.boss.group.position, 3.6 * s)) {
       this.damageBoss();
       return true;
     }
@@ -483,25 +565,16 @@ export class Game {
     r.flash = 0.08;
     if (r.hp > 0) {
       this.sfx.hit();
-      this.sparks.burst(r.mesh.position, C.ice, 6, 3 * this.scale);
+      this.sparks.burst(r.obj.position, C.white, 6, 3 * this.scale);
       return;
     }
-    const pos = r.mesh.position.clone();
-    const color = r.kind === "gold" ? C.signal : C.paper;
+    const pos = r.obj.position.clone();
+    const color = r.kind === "gold" ? C.green : C.yellow;
     this.sparks.burst(pos, color, r.kind === "large" ? 60 : 30, 7 * this.scale);
     this.sfx.explode(r.kind === "large");
     this.removeRock(i);
     this.kills++;
-    this.streak++;
-    this.comboT = R.COMBO_WINDOW;
-    const lvl = R.comboLevel(this.streak);
-    if (lvl > this.maxCombo) this.maxCombo = lvl;
-    if (this.streak % 4 === 0 && lvl <= 5 && this.streak <= 16) {
-      this.sfx.combo(lvl);
-      this.showToast(`Combo x${lvl}`);
-      if (lvl === 5) this.cb.onEvent("combo", "combo x5!");
-    }
-    this.award(R.ROCK[r.kind].points);
+    this.registerKill(R.ROCK[r.kind].points);
 
     if (r.kind === "large") {
       this.spawnRock("medium", pos, R.ROCK.medium.radius);
@@ -514,6 +587,19 @@ export class Game {
     }
   }
 
+  private registerKill(points: number): void {
+    this.streak++;
+    this.comboT = R.COMBO_WINDOW;
+    const lvl = R.comboLevel(this.streak);
+    if (lvl > this.maxCombo) this.maxCombo = lvl;
+    if (this.streak % 4 === 0 && this.streak <= 16) {
+      this.sfx.combo(lvl);
+      this.showToast(`COMBO x${lvl}!`);
+      if (lvl === 5) this.cb.onEvent("combo", "combo x5!");
+    }
+    this.award(points);
+  }
+
   private award(base: number): void {
     this.score += R.pointsFor(base, this.streak, this.hasPower("double"));
   }
@@ -523,7 +609,7 @@ export class Game {
     if (this.lives < R.MAX_LIVES) options.push("life", "life");
     const kind = options[Math.floor(Math.random() * options.length)]!;
     this.sfx.power();
-    this.showToast(POWER_LABEL[kind]);
+    this.showToast(POWER_LABEL[kind].toUpperCase());
     if (kind === "life") {
       this.lives = Math.min(R.MAX_LIVES, this.lives + 1);
       return;
@@ -540,8 +626,8 @@ export class Game {
   private takeDamage(): void {
     if (this.hasPower("shield")) {
       this.powers = this.powers.filter((p) => p.kind !== "shield");
-      this.sfx.hit();
-      this.showToast("Scudo esaurito");
+      this.sfx.shieldHit();
+      this.showToast("SCUDO ESAURITO");
       return;
     }
     this.lives--;
@@ -557,38 +643,25 @@ export class Game {
     const s = this.scale;
     const index = this.bossesBeaten;
     const group = new THREE.Group();
-    const core = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(1.9 * s, 1),
-      new THREE.MeshLambertMaterial({ color: C.coral, emissive: 0x80142a, flatShading: true }),
-    );
-    group.add(core);
+    const hull = instance(this.models, "boss");
+    hull.scale.setScalar(4.2 * s);
+    hull.rotation.y = Math.PI;
+    group.add(hull);
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(3.4 * s, 0.32 * s, 8, 40),
-      new THREE.MeshLambertMaterial({ color: C.ice, emissive: 0x2a4a66, flatShading: true }),
+      new THREE.TorusGeometry(5.2 * s, 0.14 * s, 6, 48),
+      new THREE.MeshBasicMaterial({ color: C.pink }),
     );
-    ring.rotation.x = Math.PI / 2.4;
     group.add(ring);
-    for (let i = 0; i < 6; i++) {
-      const spike = new THREE.Mesh(
-        new THREE.ConeGeometry(0.35 * s, 1.4 * s, 5),
-        new THREE.MeshLambertMaterial({ color: C.signal, emissive: 0x5a3a00, flatShading: true }),
-      );
-      const a = (i / 6) * Math.PI * 2;
-      spike.position.set(Math.cos(a) * 3.4 * s, 0, Math.sin(a) * 3.4 * s);
-      spike.rotation.z = -Math.PI / 2;
-      spike.rotation.y = -a;
-      ring.add(spike);
-    }
     const bar = new THREE.Mesh(
-      new THREE.PlaneGeometry(4 * s, 0.25 * s),
-      new THREE.MeshBasicMaterial({ color: C.signal, side: THREE.DoubleSide }),
+      new THREE.PlaneGeometry(5 * s, 0.32 * s),
+      new THREE.MeshBasicMaterial({ color: C.pink, side: THREE.DoubleSide }),
     );
-    bar.position.y = 4.4 * s;
+    bar.position.y = 4.6 * s;
     group.add(bar);
-    group.position.copy(this.dirFrom(0, 0.2, new THREE.Vector3()).multiplyScalar(40 * s).add(this.anchor));
+    group.position.copy(this.dirFrom(0, 0.2, new THREE.Vector3()).multiplyScalar(42 * s).add(this.anchor));
     this.root.add(group);
     const max = R.bossHp(index);
-    this.boss = { group, core, hp: max, max, index, t: 0, fireIn: 2.5, flash: 0, bar };
+    this.boss = { group, ring, hp: max, max, index, t: 0, fireIn: 2.5, flash: 0, bar };
     this.cb.onEvent("boss", "è arrivato il boss!");
   }
 
@@ -597,21 +670,21 @@ export class Game {
     if (!b) return;
     const s = this.scale;
     b.t += dt;
-    const dist = Math.max(20, 40 - b.t * 6) * s;
+    const dist = Math.max(22, 42 - b.t * 6) * s;
     const az = Math.sin(b.t * 0.45) * 0.55;
-    const el = 0.2 + Math.sin(b.t * 0.7) * 0.08;
+    const el = 0.22 + Math.sin(b.t * 0.7) * 0.08;
     b.group.position.copy(this.dirFrom(az, el, v1).multiplyScalar(dist).add(this.anchor));
     b.group.lookAt(this.head);
-    (b.group.children[1] as THREE.Mesh).rotation.z += dt * 1.2;
+    b.ring.rotation.z += dt * 1.5;
     b.bar.scale.x = Math.max(0.001, b.hp / b.max);
     if (b.flash > 0) {
       b.flash -= dt;
-      b.core.scale.setScalar(1 + Math.max(0, b.flash) * 1.2);
+      b.group.scale.setScalar(1 + Math.max(0, b.flash) * 0.6);
     }
     b.fireIn -= dt;
     if (b.fireIn <= 0 && b.t > 3) {
       b.fireIn = R.mineInterval(b.index);
-      this.spawnMine(b.group.position);
+      this.spawnMine(b.group.position, 5.5);
     }
   }
 
@@ -620,40 +693,42 @@ export class Game {
     b.hp--;
     b.flash = 0.06;
     this.sfx.hit();
-    this.sparks.burst(b.core.getWorldPosition(v1), C.signal, 5, 4 * this.scale);
+    this.sparks.burst(b.group.position, C.yellow, 5, 4 * this.scale);
     if (b.hp > 0) return;
     const pos = b.group.position.clone();
-    this.sparks.burst(pos, C.coral, 120, 14 * this.scale);
-    this.sparks.burst(pos, C.signal, 120, 9 * this.scale);
+    this.sparks.burst(pos, C.pink, 140, 15 * this.scale);
+    this.sparks.burst(pos, C.yellow, 140, 9 * this.scale);
     this.sfx.explode(true);
     this.root.remove(b.group);
     this.boss = null;
     this.bossesBeaten++;
     this.score += R.bossReward(b.index) * (this.hasPower("double") ? 2 : 1);
     for (const m of this.mines) if (m.alive) this.killMine(m);
-    this.showToast(`Boss sconfitto! +${R.bossReward(b.index)}`);
+    this.showToast(`BOSS ABBATTUTO +${R.bossReward(b.index)}`);
     this.cb.onEvent("boss", `ha sconfitto il boss n° ${b.index + 1}`);
     this.nextWave();
   }
 
-  private spawnMine(from: THREE.Vector3): void {
+  private spawnMine(from: THREE.Vector3, speed: number): void {
     let m = this.mines.find((x) => !x.alive);
     if (!m) {
-      m = { mesh: new THREE.Mesh(this.mineGeo, this.mineMat), vel: new THREE.Vector3(), alive: false };
+      m = { id: 0, mesh: new THREE.Mesh(this.mineGeo, this.mineMat), vel: new THREE.Vector3(), alive: false };
       this.mines.push(m);
       this.root.add(m.mesh);
     }
+    m.id = this.nextId++;
     m.alive = true;
     m.mesh.visible = true;
     m.mesh.position.copy(from);
-    m.vel.copy(this.head).sub(from).normalize().multiplyScalar(5.5 * this.scale);
+    m.vel.copy(this.head).sub(from).normalize().multiplyScalar(speed * this.scale);
   }
 
   private moveMines(dt: number): void {
     for (const m of this.mines) {
       if (!m.alive) continue;
       m.mesh.position.addScaledVector(m.vel, dt);
-      m.mesh.rotation.y += dt * 4;
+      m.mesh.rotation.y += dt * 5;
+      m.mesh.rotation.x += dt * 3;
       if (m.mesh.position.distanceTo(this.head) < R.HIT_RADIUS * this.scale) {
         this.killMine(m);
         this.takeDamage();
@@ -672,6 +747,7 @@ export class Game {
     const stats: GameStats = {
       score: this.score,
       kills: this.kills,
+      enemies: this.enemyKills,
       shots: this.shots,
       hits: this.hits,
       maxCombo: this.maxCombo,
@@ -684,10 +760,15 @@ export class Game {
     this.powers = [];
     this.result = { stats, player: this.player, rankToday: null, rankAll: null, isRecord: false };
     if (this.boss) {
-      this.sparks.burst(this.boss.group.position, C.ice, 40, 6 * this.scale);
+      this.sparks.burst(this.boss.group.position, C.cyan, 40, 6 * this.scale);
       this.root.remove(this.boss.group);
       this.boss = null;
     }
+    for (const e of this.enemies) {
+      this.sparks.burst(e.obj.position, C.cyan, 20, 4 * this.scale);
+      this.root.remove(e.obj);
+    }
+    this.enemies = [];
     for (const m of this.mines) if (m.alive) this.killMine(m);
     this.sfx.over();
     this.cb.onEnd(stats);
@@ -695,6 +776,8 @@ export class Game {
 
   private clearField(): void {
     for (let i = this.rocks.length - 1; i >= 0; i--) this.removeRock(i);
+    for (const e of this.enemies) this.root.remove(e.obj);
+    this.enemies = [];
     for (const b of this.bolts) this.killBolt(b);
     for (const m of this.mines) this.killMine(m);
     if (this.boss) this.root.remove(this.boss.group);
@@ -702,11 +785,12 @@ export class Game {
     this.sparks.clear();
   }
 
-  // ---------------- effetti e interfaccia ----------------
+  // ---------------- effetti, interfaccia, spettatore ----------------
 
   private updateEffects(dt: number): void {
     this.shieldBubble.visible = this.hasPower("shield");
     this.shieldBubble.position.copy(this.head);
+    this.shieldBubble.rotation.y += dt * 0.6;
     this.hurtBubble.position.copy(this.head);
     if (this.hurtT > 0) this.hurtT -= dt;
     (this.hurtBubble.material as THREE.MeshBasicMaterial).opacity = Math.max(0, this.hurtT) * 0.9;
@@ -715,6 +799,10 @@ export class Game {
   /** Il danno appena subito (0..1), per il lampo rosso sullo schermo del PC. */
   get hurt(): number {
     return Math.max(0, this.hurtT) * 2;
+  }
+
+  get bossActive(): boolean {
+    return this.boss !== null;
   }
 
   private showToast(text: string): void {
@@ -738,6 +826,43 @@ export class Game {
       result: this.result,
       lockout: this.phase === "over" ? Math.max(0, OVER_LOCK - this.overT) : 0,
       online: this.online,
+    };
+  }
+
+  /** Converte una posizione del mondo nel riferimento della partita (destra, su, avanti). */
+  private local(p: THREE.Vector3): [number, number, number] {
+    const d = v2.copy(p).sub(this.anchor);
+    const k = 1 / this.scale;
+    const r2 = (n: number) => Math.round(n * k * 100) / 100;
+    return [r2(d.dot(this.right)), r2(d.y), r2(d.dot(this.forward))];
+  }
+
+  /** Fotogramma compatto per il monitor spettatore. */
+  frame(): GameFrame {
+    const ents: FrameEntity[] = [];
+    const push = (id: number, kind: EntityKind, p: THREE.Vector3, rot: number) => {
+      const [x, y, z] = this.local(p);
+      ents.push([id, kind, x, y, z, Math.round(rot * 100) / 100]);
+    };
+    for (const r of this.rocks) push(r.id, ENT[r.kind], r.obj.position, r.obj.rotation.x);
+    for (const e of this.enemies) push(e.id, ENT.enemy, e.obj.position, 0);
+    for (const m of this.mines) if (m.alive) push(m.id, ENT.mine, m.mesh.position, 0);
+    for (const b of this.bolts) if (b.alive) push(b.id, ENT.bolt, b.mesh.position, 0);
+    const [hx, hy, hz] = this.local(this.head);
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    let boss: GameFrame["boss"] = null;
+    if (this.boss) {
+      const [x, y, z] = this.local(this.boss.group.position);
+      boss = [x, y, z, this.boss.hp, this.boss.max];
+    }
+    return {
+      head: [hx, hy, hz, r2(this.headDir.dot(this.right)), r2(this.headDir.y), r2(this.headDir.dot(this.forward))],
+      ents,
+      boss,
+      score: this.score,
+      lives: this.lives,
+      combo: R.comboLevel(this.streak),
+      wave: this.wave,
     };
   }
 }

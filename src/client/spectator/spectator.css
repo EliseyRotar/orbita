@@ -1,0 +1,152 @@
+body.spectator {
+  overflow: hidden;
+}
+
+#stage,
+#stage canvas {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
+
+.live-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 24px 48px;
+  background: var(--black);
+  border-bottom: 4px solid var(--pink);
+}
+.live-tag {
+  font-family: var(--pixel);
+  font-size: 22px;
+  color: var(--grey);
+}
+.live-tag[data-live="true"] {
+  color: var(--pink);
+}
+.live-player {
+  font-family: var(--pixel);
+  font-size: 30px;
+  color: var(--yellow);
+}
+.live-meta {
+  font-size: 40px;
+  color: var(--cyan);
+}
+.live-score {
+  margin-left: auto;
+  font-family: var(--pixel);
+  font-size: 44px;
+}
+
+.boss {
+  position: fixed;
+  left: 50%;
+  top: 130px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: min(760px, 70vw);
+  font-family: var(--pixel);
+  font-size: 18px;
+  color: var(--pink);
+}
+.boss-track {
+  flex: 1;
+  height: 26px;
+  padding: 3px;
+  border: 3px solid var(--pink);
+}
+#boss-bar {
+  height: 100%;
+  background: var(--pink);
+  transform-origin: left;
+}
+
+.idle {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 24px;
+  pointer-events: none;
+  text-align: center;
+}
+.idle p {
+  margin: 0;
+}
+.idle-title {
+  font-family: var(--pixel);
+  font-size: clamp(56px, 9vw, 140px);
+  color: var(--yellow);
+  text-shadow: 0.07em 0.07em 0 var(--pink);
+}
+.idle-text {
+  font-size: 48px;
+  color: var(--white);
+}
+.idle-cta {
+  font-family: var(--pixel);
+  font-size: 24px;
+  color: var(--cyan);
+}
+
+.tabs {
+  position: fixed;
+  left: 48px;
+  bottom: 44px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  max-width: calc(100vw - 600px);
+}
+.tab {
+  display: grid;
+  gap: 6px;
+  min-width: 190px;
+  padding: 12px 18px;
+  text-align: left;
+  cursor: pointer;
+  background: var(--black);
+  border: 4px solid var(--dim);
+}
+.tab-dev {
+  font-size: 28px;
+  color: var(--grey);
+}
+.tab-dev small {
+  font-size: 22px;
+}
+.tab-who {
+  font-family: var(--pixel);
+  font-size: 16px;
+  color: var(--white);
+}
+.tab.playing .tab-who {
+  color: var(--green);
+}
+.tab.on {
+  border-color: var(--pink);
+}
+.tab.on .tab-who {
+  color: var(--yellow);
+}
+
+.auto-note {
+  position: fixed;
+  right: 48px;
+  bottom: 52px;
+  max-width: 420px;
+  margin: 0;
+  font-size: 32px;
+  line-height: 1.15;
+  text-align: right;
+  color: var(--grey);
+}

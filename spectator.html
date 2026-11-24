@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Orbita · Spettatore</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body class="spectator">
+    <div id="stage"></div>
+
+    <header class="live-bar">
+      <span id="live-tag" class="live-tag">IN ATTESA</span>
+      <span id="live-player" class="live-player"></span>
+      <span id="live-meta" class="live-meta"></span>
+      <span id="live-score" class="live-score"></span>
+    </header>
+
+    <div id="boss" class="boss" hidden>
+      <span>BOSS</span>
+      <div class="boss-track"><div id="boss-bar"></div></div>
+    </div>
+
+    <section id="idle" class="idle">
+      <p class="idle-title">ORBITA</p>
+      <p class="idle-text">Nessuna partita in corso</p>
+      <p class="idle-cta blink">CHIEDI UN VISORE ALLO STAND</p>
+    </section>
+
+    <nav id="tabs" class="tabs" aria-label="Scegli la postazione da guardare"></nav>
+    <p class="auto-note" id="auto-note">la telecamera segue chi sta facendo più punti</p>
+
+    <div class="scanlines" aria-hidden="true"></div>
+    <script type="module" src="/src/client/spectator/main.ts"></script>
+  </body>
+</html>

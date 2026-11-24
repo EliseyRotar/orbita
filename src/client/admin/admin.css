@@ -1,7 +1,7 @@
 body.admin {
   min-height: 100%;
-  background: var(--deep);
-  font-size: 16px;
+  background: var(--black);
+  font-size: 26px;
 }
 
 .bar {
@@ -12,21 +12,21 @@ body.admin {
   align-items: center;
   gap: 24px;
   padding: 14px 24px;
-  background: var(--ultramarine);
-  border-bottom: 2px solid var(--line);
+  background: #0d0d0d;
+  border-bottom: 2px solid var(--dim);
 }
 .bar h1 {
   margin: 0;
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 36px;
-  color: var(--signal);
+  font-family: var(--pixel);
+  font-weight: 400;
+  font-size: 26px;
+  color: var(--yellow);
 }
 .bar h1 span {
-  font-family: var(--font-text);
+  font-family: var(--term);
   font-size: 18px;
   font-weight: 700;
-  color: var(--ice);
+  color: var(--cyan);
 }
 .links {
   display: flex;
@@ -34,7 +34,7 @@ body.admin {
   margin-left: auto;
 }
 .links a {
-  color: var(--ice);
+  color: var(--cyan);
   font-weight: 700;
 }
 
@@ -45,7 +45,7 @@ body.admin {
   height: 10px;
   margin-right: 8px;
   border-radius: 50%;
-  background: var(--coral);
+  background: var(--pink);
 }
 .conn[data-online="true"]::before {
   background: #5ee6a8;
@@ -58,24 +58,26 @@ body.admin {
   padding: 24px;
 }
 .col h2 {
-  margin: 28px 0 8px;
-  font-size: 20px;
-  color: var(--ice);
+  margin: 28px 0 10px;
+  font-family: var(--pixel);
+  font-weight: 400;
+  font-size: 16px;
+  color: var(--cyan);
 }
 .col h2:first-child {
   margin-top: 0;
 }
 .hint {
   margin: 0 0 14px;
-  color: var(--paper-dim);
+  color: var(--grey);
   line-height: 1.45;
 }
 .hint code {
-  color: var(--signal);
-  font-size: 15px;
+  color: var(--yellow);
+  font-size: 22px;
 }
 .empty {
-  color: var(--paper-dim);
+  color: var(--grey);
 }
 
 .inline {
@@ -87,38 +89,41 @@ body.admin {
   flex: 1;
   min-width: 0;
   padding: 10px 12px;
-  background: var(--deep);
-  border: 2px solid var(--line);
-  border-radius: var(--radius-s);
+  background: var(--black);
+  border: 2px solid var(--dim);
+  border-radius: 0;
 }
 .inline input:focus,
 .pin input:focus {
-  border-color: var(--signal);
+  border-color: var(--yellow);
   outline: none;
 }
 
-.btn {
-  padding: 10px 16px;
+.admin .btn {
+  min-height: 0;
+  box-shadow: none;
+  font-size: 12px;
+  padding: 12px 14px;
   font-weight: 700;
   cursor: pointer;
   background: transparent;
-  border: 2px solid var(--ice);
-  border-radius: var(--radius-s);
+  border: 2px solid var(--cyan);
+  border-radius: 0;
   white-space: nowrap;
 }
-.btn.primary {
-  color: var(--deep);
-  background: var(--signal);
-  border-color: var(--signal);
+.admin .btn.primary {
+  color: var(--black);
+  background: var(--yellow);
+  border-color: var(--yellow);
 }
-.btn:disabled {
+.admin .btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
 .link {
   padding: 4px 6px;
   font-weight: 700;
-  color: var(--ice);
+  color: var(--cyan);
   cursor: pointer;
   background: none;
   border: 0;
@@ -126,7 +131,7 @@ body.admin {
   text-underline-offset: 3px;
 }
 .link.danger {
-  color: var(--coral);
+  color: var(--pink);
 }
 
 /* ---------- postazioni ---------- */
@@ -142,16 +147,16 @@ body.admin {
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   padding: 16px;
-  background: rgba(22, 36, 122, 0.45);
-  border: 2px solid var(--line);
+  background: #0d0d0d;
+  border: 2px solid var(--dim);
   border-left-width: 8px;
-  border-radius: var(--radius-s);
+  border-radius: 0;
 }
 .device.st-playing {
-  border-left-color: var(--signal);
+  border-left-color: var(--yellow);
 }
 .device.st-ready {
-  border-left-color: var(--ice);
+  border-left-color: var(--cyan);
 }
 .device.offline {
   opacity: 0.5;
@@ -174,23 +179,23 @@ body.admin {
 }
 .device .label:hover,
 .device .label:focus {
-  border-color: var(--line);
+  border-color: var(--dim);
   outline: none;
 }
 .tag {
   padding: 2px 8px;
-  font-size: 14px;
+  font-size: 21px;
   font-weight: 700;
-  color: var(--deep);
-  background: var(--ice);
+  color: var(--black);
+  background: var(--cyan);
   border-radius: 6px;
 }
 .state {
-  font-size: 14px;
-  color: var(--paper-dim);
+  font-size: 21px;
+  color: var(--grey);
 }
 .st-playing .state {
-  color: var(--signal);
+  color: var(--yellow);
   font-weight: 700;
 }
 .device .live {
@@ -236,17 +241,17 @@ body.admin {
 }
 .games th {
   padding: 6px 8px;
-  font-size: 14px;
+  font-size: 21px;
   text-align: left;
-  color: var(--paper-dim);
+  color: var(--grey);
 }
 .games td {
   padding: 8px;
   vertical-align: top;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--dim);
 }
 .games small {
-  color: var(--paper-dim);
+  color: var(--grey);
 }
 .games .num {
   font-weight: 700;
@@ -272,7 +277,7 @@ body.admin {
   font-weight: 700;
 }
 .error {
-  color: var(--coral);
+  color: var(--pink);
 }
 
 @media (max-width: 900px) {

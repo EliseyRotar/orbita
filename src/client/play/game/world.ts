@@ -1,74 +1,71 @@
 import * as THREE from "three";
+import { instance, type Models } from "../../common/assets.ts";
 import { C } from "./palette.ts";
 
 /**
- * Ambiente per PC e VR: cielo stellato, un pianeta lontano e la piattaforma
- * della stazione sotto i piedi (in VR dà un riferimento e riduce il mal di movimento).
+ * Ambiente per PC, VR e monitor spettatore: la Via Lattea vera (mappa stellare NASA,
+ * pubblico dominio) e la piattaforma della stazione sotto i piedi (Kenney, CC0).
  * In AR (HoloLens) non si disegna: si vede la stanza vera.
  */
-export function buildEnvironment(): THREE.Group {
+export function buildEnvironment(sky: THREE.Texture | null, models: Models | null): THREE.Group {
   const env = new THREE.Group();
 
-  // stelle
-  const n = 1800;
-  const pos = new Float32Array(n * 3);
-  const col = new Float32Array(n * 3);
-  const c = new THREE.Color();
-  for (let i = 0; i < n; i++) {
-    const u = Math.random() * 2 - 1;
-    const th = Math.random() * Math.PI * 2;
-    const r = Math.sqrt(1 - u * u);
-    const R = 160 + Math.random() * 40;
-    pos.set([r * Math.cos(th) * R, u * R, r * Math.sin(th) * R], i * 3);
-    c.setHex([C.paper, C.ice, C.signal, C.coral][Math.random() < 0.8 ? 0 : (1 + Math.floor(Math.random() * 3))]!);
-    const k = 0.4 + Math.random() * 0.6;
-    col.set([c.r * k, c.g * k, c.b * k], i * 3);
-  }
-  const sg = new THREE.BufferGeometry();
-  sg.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  sg.setAttribute("color", new THREE.BufferAttribute(col, 3));
-  env.add(new THREE.Points(sg, new THREE.PointsMaterial({ size: 0.9, vertexColors: true, sizeAttenuation: true, depthWrite: false })));
-
-  // pianeta con anello
-  const planet = new THREE.Mesh(
-    new THREE.SphereGeometry(34, 48, 32),
-    new THREE.MeshLambertMaterial({ color: C.coral, emissive: 0x3a0f2a }),
-  );
-  planet.position.set(-70, 18, -140);
-  env.add(planet);
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(44, 62, 96),
-    new THREE.MeshBasicMaterial({ color: C.signal, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }),
-  );
-  ring.position.copy(planet.position);
-  ring.rotation.set(1.25, 0.2, 0.3);
-  env.add(ring);
-
-  // piattaforma della stazione
-  const deck = new THREE.Group();
-  const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(2.2, 48),
-    new THREE.MeshLambertMaterial({ color: C.ultramarine, emissive: 0x070c2c }),
-  );
-  floor.rotation.x = -Math.PI / 2;
-  deck.add(floor);
-  for (const [r, w, color] of [[2.2, 0.06, C.signal], [1.4, 0.025, C.ice], [0.6, 0.025, C.ice]] as const) {
-    const line = new THREE.Mesh(
-      new THREE.RingGeometry(r - w, r, 64),
-      new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }),
+  if (sky) {
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(300, 64, 32),
+      new THREE.MeshBasicMaterial({ map: sky, side: THREE.BackSide, depthWrite: false, fog: false }),
     );
-    line.rotation.x = -Math.PI / 2;
-    line.position.y = 0.005;
-    deck.add(line);
+    // la parte più luminosa della galassia davanti al giocatore, un po' in alto
+    dome.rotation.set(0.78, 0, 0.3);
+    env.add(dome);
+  } else {
+    env.add(starfield());
   }
-  env.add(deck);
+
+  if (models) {
+    const deck = instance(models, "deck");
+    deck.scale.setScalar(2.4);
+    env.add(deck);
+    const dish = instance(models, "dish");
+    dish.scale.setScalar(0.7);
+    dish.position.set(1.4, 0.05, 0.9);
+    dish.rotation.y = -2.4;
+    env.add(dish);
+  }
+
+  // anello luminoso a terra: fa capire dove stare con il visore
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.55, 0.6, 48),
+    new THREE.MeshBasicMaterial({ color: C.cyan, side: THREE.DoubleSide }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.09;
+  env.add(ring);
 
   return env;
 }
 
+function starfield(): THREE.Points {
+  const n = 1800;
+  const pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const u = Math.random() * 2 - 1;
+    const th = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(1 - u * u);
+    const R = 180;
+    pos.set([r * Math.cos(th) * R, u * R, r * Math.sin(th) * R], i * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  return new THREE.Points(g, new THREE.PointsMaterial({ color: C.white, size: 0.8 }));
+}
+
 export function addLights(scene: THREE.Scene, ar: boolean): void {
-  scene.add(new THREE.HemisphereLight(C.ice, ar ? 0x8899cc : C.deep, ar ? 1.6 : 1.1));
-  const sun = new THREE.DirectionalLight(0xfff1d6, ar ? 1.6 : 2.2);
+  scene.add(new THREE.HemisphereLight(0xdfe8ff, ar ? 0x9a8a80 : 0x251a2e, ar ? 2.4 : 1.6));
+  const sun = new THREE.DirectionalLight(0xfff0dc, ar ? 2.2 : 2.8);
   sun.position.set(4, 6, 3);
   scene.add(sun);
+  const rim = new THREE.DirectionalLight(0x8fb8ff, 1.1);
+  rim.position.set(-5, 2, -6);
+  scene.add(rim);
 }

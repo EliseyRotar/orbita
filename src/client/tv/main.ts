@@ -1,12 +1,16 @@
 import "../common/tokens.css";
 import "./tv.css";
 
-import { accuracy, PLATFORM_NAME, type DeviceInfo, type FeedItem, type GameRecord, type Snapshot } from "../../shared/protocol.ts";
+import { accuracy, type DeviceInfo, type FeedItem, type GameRecord, type Platform, type Snapshot } from "../../shared/protocol.ts";
 import { esc, fmt, minutes } from "../common/format.ts";
 import { Link } from "../common/net.ts";
 
 const $ = (id: string) => document.getElementById(id)!;
 const link = new Link(() => ({ t: "hello", role: "tv" }));
+
+const ORD = ["1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH", "9TH", "10TH"];
+const ROW_COLORS = ["var(--yellow)", "var(--pink)", "var(--cyan)", "var(--green)"];
+const VIA: Record<Platform, string> = { desktop: "PC", vr: "QUEST", ar: "HOLO", mobile: "TEL" };
 
 let lastSnap: Snapshot | null = null;
 let seenFeed = new Set<string>();
@@ -28,8 +32,10 @@ link.on((msg) => {
   lastSnap = msg.data;
 });
 
-// le partite in corso hanno un timer: aggiorna anche senza nuovi messaggi
+// i secondi delle partite in corso avanzano anche senza nuovi messaggi
 setInterval(() => lastSnap && renderDevices(lastSnap.devices, Date.now()), 1000);
+
+const pad = (n: number) => String(Math.max(0, Math.floor(n))).padStart(6, "0");
 
 function render(s: Snapshot): void {
   renderLeaderboard(s.leaderboardToday);
@@ -42,28 +48,24 @@ function render(s: Snapshot): void {
     $("qr").innerHTML = cfg.qrSvg;
     $("qr").dataset.url = cfg.qrUrl;
   }
-  $("qr-label").textContent = cfg.qrLabel;
+  $("qr-label").textContent = cfg.qrLabel.toUpperCase();
   $("school").textContent = cfg.school;
   $("course").textContent = cfg.course;
 }
 
 function renderLeaderboard(rows: GameRecord[]): void {
   const list = $("leaderboard");
-  if (rows.length === 0) {
-    list.innerHTML = `<li class="empty">Ancora nessuna partita oggi. Il primo nome qui lo scegli tu.</li>`;
-    return;
-  }
-  list.innerHTML = rows
-    .slice(0, 10)
-    .map(
-      (g, i) => `
-      <li class="row ${i < 3 ? `top top-${i + 1}` : ""}">
-        <span class="pos">${i + 1}</span>
-        <span class="name">${esc(g.player)}</span>
-        <span class="via">${PLATFORM_NAME[g.platform]}</span>
-        <span class="pts">${fmt(g.score)}</span>
-      </li>`,
-    )
+  const filled = Array.from({ length: 10 }, (_, i) => rows[i] ?? null);
+  list.innerHTML = filled
+    .map((g, i) => {
+      const color = g ? ROW_COLORS[Math.min(i, 3)] : "var(--dim)";
+      return `<li class="row" style="color:${i < 4 ? color : g ? "var(--white)" : "var(--dim)"}">
+        <span class="pos">${ORD[i]}</span>
+        <span class="name">${g ? esc(g.player.toUpperCase()) : "---"}</span>
+        <span class="pts">${g ? pad(g.score) : "000000"}</span>
+        <span class="via">${g ? VIA[g.platform] : ""}</span>
+      </li>`;
+    })
     .join("");
 }
 
@@ -71,22 +73,20 @@ function renderDevices(devices: DeviceInfo[], now: number): void {
   const list = $("devices");
   const visible = devices.filter((d) => d.online);
   if (visible.length === 0) {
-    list.innerHTML = `<li class="empty">Nessuna postazione collegata</li>`;
+    list.innerHTML = `<li class="dev idle"><span>nessun visore collegato</span></li>`;
     return;
   }
   list.innerHTML = visible
     .map((d) => {
       const live = d.live;
-      const state = live
-        ? `<span class="dev-player">${esc(live.player)}</span>
-           <span class="dev-score">${fmt(live.score)}</span>
-           <span class="dev-meta"><span class="dev-lives">${"▲".repeat(Math.max(0, live.lives))}</span> ondata ${live.wave}${live.combo > 1 ? ` · combo x${live.combo}` : ""} · ${Math.floor((now - live.startedAt) / 1000)} s</span>`
-        : d.nextPlayer
-          ? `<span class="dev-player">${esc(d.nextPlayer)}</span><span class="dev-wait">si prepara</span>`
-          : `<span class="dev-wait">libera, mettiti in fila</span>`;
-      return `<li class="dev ${live ? "is-live" : ""}">
-        <span class="dev-label">${esc(d.label)} <small>${PLATFORM_NAME[d.platform]}</small></span>
-        ${state}
+      const who = live ? live.player.toUpperCase() : d.nextPlayer ? `${d.nextPlayer.toUpperCase()} SI PREPARA` : "LIBERO";
+      const right = live ? `<span class="dev-score">${pad(live.score)}</span>` : `<span class="dev-free">${d.nextPlayer ? "PRONTO" : "IN FILA!"}</span>`;
+      const meta = live ? `<span class="dev-meta">ond.${live.wave} ${Math.floor((now - live.startedAt) / 1000)}s</span>` : "";
+      return `<li class="dev ${live ? "live" : ""}">
+        <span class="dev-label">${esc(d.label.toUpperCase())}</span>
+        <span class="dev-who">${esc(who)}</span>
+        ${meta}
+        ${right}
       </li>`;
     })
     .join("");
@@ -94,39 +94,40 @@ function renderDevices(devices: DeviceInfo[], now: number): void {
 
 function renderTotals(s: Snapshot): void {
   const t = s.totalsToday;
-  const acc = Math.round(accuracy(t) * 100);
   $("totals").innerHTML = `
-    <div><dt>Partite</dt><dd>${fmt(t.games)}</dd></div>
-    <div><dt>Asteroidi distrutti</dt><dd>${fmt(t.kills)}</dd></div>
-    <div><dt>Colpi sparati</dt><dd>${fmt(t.shots)}</dd></div>
-    <div><dt>Precisione media</dt><dd>${acc}%</dd></div>
-    <div><dt>Boss sconfitti</dt><dd>${fmt(t.bosses)}</dd></div>
-    <div><dt>Tempo in volo</dt><dd>${minutes(t.playMs)}</dd></div>`;
+    <div><dt>PARTITE</dt><dd>${fmt(t.games)}</dd></div>
+    <div><dt>ASTEROIDI</dt><dd>${fmt(t.kills)}</dd></div>
+    <div><dt>NEMICI</dt><dd>${fmt(t.enemies)}</dd></div>
+    <div><dt>BOSS</dt><dd>${fmt(t.bosses)}</dd></div>
+    <div><dt>PRECISIONE</dt><dd>${Math.round(accuracy(t) * 100)}%</dd></div>
+    <div><dt>IN VOLO</dt><dd>${minutes(t.playMs)}</dd></div>`;
+
+  // record di sempre per tipo di dispositivo, dal migliore al peggiore
   const best = s.totalsAll.bestByPlatform;
-  const entries = (["vr", "ar", "desktop", "mobile"] as const).filter((p) => best[p]);
-  $("platforms").innerHTML = entries.length
-    ? `<p class="duel">Miglior punteggio per dispositivo</p>` +
-      entries
-        .map((p) => `<div><dt>${PLATFORM_NAME[p]}</dt><dd>${fmt(best[p]!.score)} <small>${esc(best[p]!.player)}</small></dd></div>`)
-        .join("")
-    : "";
+  const duel = (Object.keys(best) as Platform[])
+    .map((p) => ({ p, ...best[p]! }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+  $("duel").innerHTML = duel.length
+    ? duel.map((d) => `<li><span class="duel-dev">${VIA[d.p]}</span><span class="duel-who">${esc(d.player.toUpperCase())}</span><span class="duel-pts">${pad(d.score)}</span></li>`).join("")
+    : `<li class="duel-empty">gioca per primo e porta in testa il tuo dispositivo</li>`;
 }
 
 function renderRecord(s: Snapshot): void {
   const top = s.leaderboardAll[0];
   $("record").innerHTML = top
-    ? `<span>Record della fiera</span><strong>${fmt(top.score)}</strong><em>${esc(top.player)}</em>`
-    : `<span>Record della fiera</span><strong>—</strong><em>ancora libero</em>`;
+    ? `<p class="rec-k">RECORD DELLA FIERA</p><p class="rec-score">${pad(top.score)}</p><p class="rec-who">${esc(top.player.toUpperCase())} · ${VIA[top.platform]}</p>`
+    : `<p class="rec-k">RECORD DELLA FIERA</p><p class="rec-score">000000</p><p class="rec-who">ANCORA LIBERO: PRENDILO TU</p>`;
 }
 
 function renderFeed(feed: FeedItem[]): void {
   $("feed").innerHTML = feed
-    .slice(0, 6)
+    .slice(0, 5)
     .map((f) => `<li class="feed-${f.kind}">${esc(f.text)}</li>`)
     .join("");
 }
 
-/** Un nuovo record della fiera prende tutto lo schermo per qualche secondo. */
+/** Un nuovo record prende tutto lo schermo per qualche secondo. */
 function detectRecords(feed: FeedItem[]): void {
   const fresh = feed.filter((f) => !seenFeed.has(f.id));
   seenFeed = new Set(feed.map((f) => f.id));
@@ -136,9 +137,9 @@ function detectRecords(feed: FeedItem[]): void {
   }
   const rec = fresh.find((f) => f.record)?.record;
   if (!rec) return;
-  $("takeover-kicker").textContent = rec.scope === "fair" ? "Nuovo record della fiera" : "Nuovo record di oggi";
-  $("takeover-name").textContent = rec.player;
-  $("takeover-score").textContent = `${fmt(rec.score)} punti`;
+  $("takeover-kicker").textContent = rec.scope === "fair" ? "NUOVO RECORD DELLA FIERA" : "NUOVO RECORD DI OGGI";
+  $("takeover-name").textContent = rec.player.toUpperCase();
+  $("takeover-score").textContent = pad(rec.score);
   const el = $("takeover");
   el.hidden = false;
   el.classList.remove("play");

@@ -75,3 +75,18 @@ export function pickRock(wave: number, rnd: () => number = Math.random): RockKin
   if (r < large + medium) return "medium";
   return "small";
 }
+
+/** Navicelle nemiche: compaiono dalla seconda ondata. */
+export const ENEMY = { radius: 2.1, hp: 3, points: 75 } as const;
+
+export function maxEnemies(wave: number): number {
+  return wave < 2 ? 0 : Math.min(4, 1 + Math.floor(wave / 2));
+}
+
+export function enemyChance(wave: number): number {
+  return wave < 2 ? 0 : Math.min(0.35, 0.14 + 0.03 * wave);
+}
+
+export function enemyFireInterval(wave: number): number {
+  return Math.max(1.5, 3 - 0.12 * wave);
+}

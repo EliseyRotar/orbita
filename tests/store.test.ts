@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fairDay, Store } from "../src/server/store.ts";
 
-const base = { kills: 1, shots: 2, hits: 1, maxCombo: 1, bosses: 0, wave: 1, durationMs: 1000, platform: "vr" as const, deviceLabel: "Quest" };
+const base = { kills: 1, enemies: 0, shots: 2, hits: 1, maxCombo: 1, bosses: 0, wave: 1, durationMs: 1000, platform: "vr" as const, deviceLabel: "Quest" };
 
 describe("archivio partite", () => {
   it("ordina la classifica e calcola la posizione", () => {

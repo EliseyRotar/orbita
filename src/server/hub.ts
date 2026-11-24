@@ -12,15 +12,20 @@ import {
   type PublicConfig,
   type ServerMsg,
   type Snapshot,
+  type SpectatorMsg,
 } from "../shared/protocol.ts";
 import { fairDay, type Store } from "./store.ts";
 
-type Role = "device" | "tv" | "admin";
+type Role = "device" | "tv" | "admin" | "spectator";
 
 interface Conn {
   ws: WebSocket;
   role: Role | null;
   deviceId: string | null;
+  /** Spettatore: postazione scelta a mano (null = automatico). */
+  pick: string | null;
+  /** Spettatore: postazione che sta seguendo adesso. */
+  following: string | null;
 }
 
 const PLATFORMS: Platform[] = ["desktop", "vr", "ar", "mobile"];
@@ -36,6 +41,8 @@ export class Hub {
   private queue: string[] = [];
   private feed: FeedItem[] = [];
   private broadcastTimer: NodeJS.Timeout | null = null;
+  /** Postazioni che stanno mandando fotogrammi agli spettatori. */
+  private watched = new Set<string>();
 
   constructor(
     private readonly store: Store,
@@ -47,7 +54,7 @@ export class Hub {
   }
 
   attach(ws: WebSocket): void {
-    const conn: Conn = { ws, role: null, deviceId: null };
+    const conn: Conn = { ws, role: null, deviceId: null, pick: null, following: null };
     this.conns.add(conn);
     ws.on("message", (raw) => {
       let msg: ClientMsg;
@@ -64,6 +71,7 @@ export class Hub {
     });
     ws.on("close", () => {
       this.conns.delete(conn);
+      if (conn.role === "spectator") this.updateWatch();
       if (conn.deviceId) {
         const dev = this.devices.get(conn.deviceId);
         const stillOpen = [...this.conns].some((c) => c.deviceId === conn.deviceId);
@@ -85,6 +93,16 @@ export class Hub {
       if (msg.role === "device") this.registerDevice(conn, msg.deviceId, msg.label, msg.platform);
       this.send(conn.ws, { t: "welcome", role: msg.role });
       if (msg.role !== "device") this.send(conn.ws, { t: "snapshot", data: this.snapshot() });
+      if (msg.role === "spectator") this.updateWatch();
+      return;
+    }
+    if (msg.t === "spectate:select" && conn.role === "spectator") {
+      conn.pick = (msg as SpectatorMsg).deviceId;
+      this.updateWatch();
+      return;
+    }
+    if (msg.t === "game:frame") {
+      if (conn.role === "device" && conn.deviceId) this.relayFrame(conn.deviceId, msg.frame);
       return;
     }
     const isDeviceMsg = msg.t.startsWith("game:") || msg.t.startsWith("device:");
@@ -107,6 +125,7 @@ export class Hub {
         existing.live = null;
       }
       this.send(conn.ws, { t: "assign", name: existing.nextPlayer });
+      if (this.watched.has(id)) this.send(conn.ws, { t: "watch", on: true });
     } else {
       this.devices.set(id, {
         id,
@@ -164,6 +183,7 @@ export class Hub {
           deviceLabel: dev.label,
           score: num(s.score),
           kills: num(s.kills),
+          enemies: num(s.enemies),
           shots: num(s.shots),
           hits: Math.min(num(s.hits), num(s.shots)),
           maxCombo: num(s.maxCombo),
@@ -182,6 +202,7 @@ export class Hub {
         }
         dev.status = "over";
         dev.live = null;
+        this.overAt.set(dev.id, Date.now());
         break;
       }
       case "game:abort":
@@ -279,8 +300,50 @@ export class Hub {
     this.broadcastTimer = setTimeout(() => {
       this.broadcastTimer = null;
       const data = JSON.stringify({ t: "snapshot", data: this.snapshot() } satisfies ServerMsg);
-      for (const c of this.conns) if (c.role === "tv" || c.role === "admin") this.sendRaw(c.ws, data);
+      for (const c of this.conns) if (c.role === "tv" || c.role === "admin" || c.role === "spectator") this.sendRaw(c.ws, data);
+      this.updateWatch();
     }, 160);
+  }
+
+  // ---------------- spettatori ----------------
+
+  /**
+   * Decide chi segue ogni spettatore (scelta manuale o, in automatico, la partita
+   * con più punti) e accende lo streaming solo sulle postazioni guardate.
+   */
+  private updateWatch(): void {
+    const live = [...this.devices.values()].filter((d) => d.online && d.live);
+    const best = live.sort((a, b) => b.live!.score - a.live!.score)[0]?.id ?? null;
+    const want = new Set<string>();
+    for (const c of this.conns) {
+      if (c.role !== "spectator") continue;
+      let target: string | null;
+      if (c.pick && this.devices.get(c.pick)?.online) target = c.pick;
+      else if (c.following && this.devices.get(c.following)?.live) target = c.following;
+      else target = best;
+      // in automatico cambia partita solo se quella seguita è finita da qualche secondo
+      if (!c.pick && c.following && target !== c.following) {
+        const cur = this.devices.get(c.following);
+        if (cur?.status === "over" && cur.online && Date.now() - (this.overAt.get(cur.id) ?? 0) < 6000) target = c.following;
+      }
+      if (target !== c.following) {
+        c.following = target;
+        this.send(c.ws, { t: "following", deviceId: target });
+      }
+      if (target) want.add(target);
+    }
+    for (const id of want) if (!this.watched.has(id)) this.sendToDevice(id, { t: "watch", on: true });
+    for (const id of this.watched) if (!want.has(id)) this.sendToDevice(id, { t: "watch", on: false });
+    this.watched = want;
+  }
+
+  private overAt = new Map<string, number>();
+
+  private relayFrame(deviceId: string, frame: unknown): void {
+    if (!frame || typeof frame !== "object") return;
+    const data = JSON.stringify({ t: "frame", data: { ...(frame as object), deviceId } });
+    if (data.length > 48_000) return;
+    for (const c of this.conns) if (c.role === "spectator" && c.following === deviceId) this.sendRaw(c.ws, data);
   }
 
   private sendToDevice(id: string, msg: ServerMsg): void {

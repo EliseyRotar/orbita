@@ -85,7 +85,21 @@
         <input id="device-label" maxlength="18" />
       </label>
       <button id="btn-mute" type="button" class="mute" aria-pressed="false">audio: si</button>
+      <button id="btn-diag" type="button" class="mute">diagnosi visore</button>
     </footer>
+
+    <section id="diag" class="diag" hidden aria-labelledby="diag-title">
+      <header>
+        <h2 id="diag-title">DIAGNOSI VISORE</h2>
+        <button type="button" class="diag-close mute" aria-label="Chiudi diagnosi">chiudi</button>
+      </header>
+      <ul class="diag-lines"></ul>
+      <div class="diag-actions">
+        <button type="button" class="btn" data-test="immersive-ar">TEST AR</button>
+        <button type="button" class="btn" data-test="immersive-vr">TEST VR</button>
+      </div>
+      <p class="diag-note">Il test entra ed esce subito dalla modalità immersiva. Se dà OK ma il gioco no, mandaci una foto di questa schermata.</p>
+    </section>
 
     <div class="scanlines" aria-hidden="true"></div>
     <script type="module" src="/src/client/play/main.ts"></script>

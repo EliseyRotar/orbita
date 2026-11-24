@@ -11,6 +11,7 @@ import { C } from "./game/palette.ts";
 import { CardPanel, HudPanel } from "./game/panel.ts";
 import { POWER_LABEL, type Aimer, type Mode, type ViewModel } from "./game/types.ts";
 import { addLights, buildEnvironment } from "./game/world.ts";
+import { setupDiagnostics } from "./diag.ts";
 
 // ---------------- identità della postazione ----------------
 
@@ -102,7 +103,17 @@ const ui = {
 // ---------------- scena ----------------
 
 const stage = $("#stage");
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+// contesto WebGL già "compatibile XR" fin dall'inizio, come negli esempi ufficiali WebXR:
+// alcuni HoloLens non riescono a convertirlo dopo, a sessione già richiesta
+const canvas = document.createElement("canvas");
+const glAttrs: WebGLContextAttributes & { xrCompatible: boolean } = {
+  antialias: true,
+  alpha: true,
+  powerPreference: "high-performance",
+  xrCompatible: true,
+};
+const context = (canvas.getContext("webgl2", glAttrs) ?? undefined) as WebGL2RenderingContext | undefined;
+const renderer = new THREE.WebGLRenderer({ canvas, context, antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -414,9 +425,10 @@ async function enterXr(kind: "vr" | "ar"): Promise<void> {
   let session: XRSession | null = null;
   try {
     // requestSession va chiamato subito, finché vale il "gesto" dell'utente
-    const request = navigator.xr!.requestSession(kind === "vr" ? "immersive-vr" : "immersive-ar", {
-      optionalFeatures: kind === "vr" ? ["local-floor", "bounded-floor", "hand-tracking"] : ["local-floor", "hand-tracking"],
-    });
+    // HoloLens: nessuna opzione extra, esattamente come l'esempio ufficiale che funziona.
+    // Chiedere "hand-tracking" o "local-floor" lì può bloccare la richiesta per sempre.
+    const init: XRSessionInit | undefined = seeThrough || kind === "ar" ? undefined : { optionalFeatures: ["local-floor", "bounded-floor"] };
+    const request = navigator.xr!.requestSession(kind === "vr" ? "immersive-vr" : "immersive-ar", init);
     // su alcuni HoloLens la richiesta resta appesa per sempre: dopo 12 s lo diciamo
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -467,6 +479,8 @@ async function enterXr(kind: "vr" | "ar"): Promise<void> {
     ui.vr.disabled = ui.ar.disabled = false;
   }
 }
+
+setupDiagnostics(document.querySelector("#btn-diag")!, document.querySelector("#diag")!);
 
 ui.vr.addEventListener("click", () => void enterXr("vr"));
 ui.ar.addEventListener("click", () => void enterXr("ar"));

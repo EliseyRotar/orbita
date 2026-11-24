@@ -389,37 +389,57 @@ async function setupXrButtons(): Promise<void> {
   }
 }
 
+let xrBusy = false;
+
+function xrError(kind: string, err: unknown): void {
+  const e = err as Error;
+  ui.xrNote.hidden = false;
+  ui.xrNote.textContent =
+    `Impossibile avviare la ${kind.toUpperCase()} (${e?.name ?? "errore"}: ${e?.message ?? err}). ` +
+    "Se si ripete: chiudi tutte le finestre di Edge, riaprilo e riprova.";
+}
+
 async function enterXr(kind: "vr" | "ar"): Promise<void> {
+  // il pizzico dell'HoloLens a volte vale doppio: una sola richiesta alla volta
+  if (xrBusy || renderer.xr.isPresenting) return;
+  xrBusy = true;
+  ui.vr.disabled = ui.ar.disabled = true;
+  ui.xrNote.hidden = true;
   sfx.unlock();
-  await document.fonts.ready;
-  const sessionInit: XRSessionInit =
-    kind === "vr"
-      ? { optionalFeatures: ["local-floor", "bounded-floor", "hand-tracking"] }
-      : { requiredFeatures: ["local"], optionalFeatures: ["hand-tracking"] };
-  let session: XRSession;
+  let session: XRSession | null = null;
   try {
-    session = await navigator.xr!.requestSession(kind === "vr" ? "immersive-vr" : "immersive-ar", sessionInit);
-  } catch (err) {
-    ui.xrNote.hidden = false;
-    ui.xrNote.textContent = `Impossibile avviare la ${kind.toUpperCase()}: ${(err as Error).message}`;
-    return;
-  }
-  const name = cleanName(ui.name.value);
-  if (name) pendingName = name;
-  platform = kind;
-  link.send({ t: "device:platform", platform });
-  renderer.xr.setReferenceSpaceType(kind === "vr" ? "local-floor" : "local");
-  renderer.xr.setFoveation(1);
-  buildScene(kind);
-  await renderer.xr.setSession(session);
-  session.addEventListener("end", () => {
-    if (game && (game.phase === "playing" || game.phase === "countdown")) game.forceEnd();
-    platform = basePlatform;
+    // requestSession va chiamato subito, finché vale il "gesto" dell'utente
+    session = await navigator.xr!.requestSession(kind === "vr" ? "immersive-vr" : "immersive-ar", {
+      optionalFeatures: kind === "vr" ? ["local-floor", "bounded-floor", "hand-tracking"] : ["local-floor", "hand-tracking"],
+    });
+    // non tutti i visori hanno il pavimento: se manca si usa lo spazio "local"
+    const space: XRReferenceSpaceType =
+      kind === "vr" && (await session.requestReferenceSpace("local-floor").then(() => true, () => false)) ? "local-floor" : "local";
+    const name = cleanName(ui.name.value);
+    if (name) pendingName = name;
+    platform = kind;
     link.send({ t: "device:platform", platform });
-    camera.position.set(0, 1.6, 0);
-    camera.rotation.set(0, 0, 0);
-    buildScene(isTouch ? "mobile" : "desktop");
-  });
+    renderer.xr.setReferenceSpaceType(space);
+    renderer.xr.setFoveation(1);
+    await document.fonts.ready;
+    buildScene(kind);
+    session.addEventListener("end", () => {
+      if (game && (game.phase === "playing" || game.phase === "countdown")) game.forceEnd();
+      platform = basePlatform;
+      link.send({ t: "device:platform", platform });
+      camera.position.set(0, 1.6, 0);
+      camera.rotation.set(0, 0, 0);
+      buildScene(isTouch ? "mobile" : "desktop");
+    });
+    await renderer.xr.setSession(session);
+  } catch (err) {
+    xrError(kind, err);
+    // una sessione rimasta aperta a metà bloccherebbe ogni nuovo tentativo
+    if (session) await session.end().catch(() => {});
+  } finally {
+    xrBusy = false;
+    ui.vr.disabled = ui.ar.disabled = false;
+  }
 }
 
 ui.vr.addEventListener("click", () => void enterXr("vr"));

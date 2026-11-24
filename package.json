@@ -11,7 +11,7 @@
     "test": "vitest run",
     "check": "npm run typecheck && npm test && npm run build && wrangler deploy --dry-run --outdir .wrangler/dry",
     "cf:dev": "vite build && wrangler dev",
-    "deploy": "vite build && wrangler deploy"
+    "deploy": "vite build && wrangler deploy && cd pages && wrangler pages deploy --project-name orbita-arcade --branch main --commit-dirty=true"
   },
   "license": "MIT",
   "type": "module",

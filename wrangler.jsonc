@@ -1,10 +1,14 @@
-// Configurazione Cloudflare Workers per Orbita online.
-// Deploy: `npm run deploy` (compila il client e pubblica).
+// Worker "orbita": ospita il Durable Object "Fair" (classifica e tempo reale).
+// Le pagine pubbliche sono su Cloudflare Pages: https://orbita-arcade.pages.dev (vedi pages/).
+// L'indirizzo workers.dev è spento: si entra solo da Pages.
+// Deploy di tutto: `npm run deploy`.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "orbita",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

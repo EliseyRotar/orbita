@@ -19,7 +19,21 @@ Quando chiedono "cosa si fa al Marconi?" si indica il QR sul monitor della class
 - **Assistente visori** (1–2 persone): mette e toglie gli HoloLens e il Quest, spiega in 10 secondi come si spara.
 - **Chi accoglie**: invita chi passa, indica il monitor spettatore e la classifica, risponde sulla scuola.
 
-## Montaggio (circa 20 minuti)
+## Indirizzi
+
+Tutto è online, non serve un server sul portatile:
+
+| Cosa | Indirizzo |
+| --- | --- |
+| Gioco (visori, PC, telefoni) | https://orbita-arcade.pages.dev |
+| Monitor classifica | https://orbita-arcade.pages.dev/monitor |
+| Monitor spettatore | https://orbita-arcade.pages.dev/spettatore |
+| Pannello operatore (PIN) | https://orbita-arcade.pages.dev/admin |
+
+Ogni dispositivo deve solo avere internet (i vostri due hotspot). I visitatori giocano dal telefono con il QR del monitor.
+Se internet in fiera non va, c'è il piano B locale descritto sotto.
+
+## Piano B: montaggio in locale (circa 20 minuti)
 
 1. **Rete**: accendi il router (o l'hotspot). Collega i due portatili, il Quest e i 5 HoloLens alla stessa rete.
 2. **Server** sul portatile A, nella cartella `orbita`:

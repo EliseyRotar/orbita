@@ -31,7 +31,16 @@ stessa idea (asteroidi che si dividono, combo, power-up, boss, 3 vite) rifatta d
 - Ogni 4 ondate arriva il **boss**, che lancia mine.
 - Distruggerne tanti di fila fa salire la **combo** fino a x5. Si gioca fino a esaurire le 3 vite.
 
-## Avvio rapido
+## Online
+
+**https://orbita-arcade.pages.dev** — gioco (anche dal telefono), `/monitor`, `/spettatore`, `/admin` (con PIN).
+
+- Le pagine sono su **Cloudflare Pages**; la classifica e il tempo reale stanno in un **Durable Object**
+  del Worker `orbita` (SQLite), raggiunto da Pages tramite `pages/functions/ws.ts`. Tutto nel piano gratuito.
+- Pubblicare una nuova versione: `npm run deploy` (serve `npx wrangler login` la prima volta).
+- PIN del pannello operatore: `npx wrangler secret put ADMIN_PIN` dentro la cartella del progetto.
+
+## Piano B in locale (senza internet)
 
 Serve [Node.js](https://nodejs.org) 20.10 o più recente.
 
@@ -49,7 +58,7 @@ Il server stampa gli indirizzi:
 | Pannello operatore | `http://localhost:8080/admin` |
 | Gioco (visori e altri PC) | `https://<ip-del-pc>:8443/` |
 
-WebXR funziona solo in HTTPS: il server crea da solo un certificato autofirmato per gli IP della rete.
+In locale WebXR richiede comunque HTTPS: il server crea da solo un certificato autofirmato per gli IP della rete.
 Al primo accesso da ogni dispositivo il browser mostra un avviso: **Avanzate → Continua**.
 
 - Come montare lo stand: [docs/FIERA.md](docs/FIERA.md)
@@ -72,8 +81,10 @@ Con `?debug` lo stato del gioco è accessibile da console in `window.orbita`.
 ```
 src/
   shared/protocol.ts     messaggi WebSocket condivisi (postazioni, monitor, spettatore, operatore)
+  worker/                Cloudflare: Worker + Durable Object "Fair" con classifica in SQLite
   server/
-    index.ts             HTTP (monitor, operatore) + HTTPS (visori) + WebSocket
+    hub.ts, records.ts   logica condivisa tra Cloudflare e server locale
+    index.ts             server locale: HTTP (monitor, operatore) + HTTPS (visori) + WebSocket
     hub.ts               stato della fiera: postazioni, partite live, coda, feed, inoltro allo spettatore
     store.ts             archivio partite su file JSON (scrittura atomica)
     certs.ts             certificato HTTPS autofirmato per gli IP della LAN

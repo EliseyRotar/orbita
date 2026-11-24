@@ -1,0 +1,12 @@
+// Cloudflare Pages: serve le pagine su orbita-arcade.pages.dev.
+// Il tempo reale (/ws) passa al Durable Object "Fair" del Worker "orbita" (../wrangler.jsonc).
+// Deploy: dalla radice del progetto `npm run deploy`.
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "orbita-arcade",
+  "pages_build_output_dir": "../dist",
+  "compatibility_date": "2026-11-01",
+  "durable_objects": {
+    "bindings": [{ "name": "FAIR", "class_name": "Fair", "script_name": "orbita" }]
+  }
+}

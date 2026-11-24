@@ -29,6 +29,7 @@
     "vite.config.ts"
   ],
   "exclude": [
-    "src/worker"
+    "src/worker",
+    "pages"
   ]
 }

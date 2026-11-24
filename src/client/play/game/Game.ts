@@ -42,6 +42,7 @@ interface Enemy {
 
 interface Bolt {
   id: number;
+  hand: number;
   mesh: THREE.Mesh;
   vel: THREE.Vector3;
   life: number;
@@ -125,7 +126,17 @@ export class Game {
   private startedAt = 0;
   private countdown = 0;
   private overT = 0;
-  private fireCd = 0;
+  /** Tempo di ricarica separato per ogni mano: si spara con due pistole insieme. */
+  private fireCd = new Map<number, number>();
+  /** Nome usato se nessuno scrive il proprio: il nome della postazione. */
+  defaultName = "Ospite";
+  /** Mano dell'ultimo colpo andato a segno (per far vibrare il controller giusto). */
+  private lastHand = -1;
+  private rings: { mesh: THREE.Mesh; t: number; size: number }[] = [];
+  private flashes: { mesh: THREE.Mesh; t: number }[] = [];
+  private ringGeo = new THREE.RingGeometry(0.85, 1, 40);
+  private flashGeo = new THREE.SphereGeometry(1, 10, 8);
+  private dust: THREE.Points | null = null;
   private powers: ActivePower[] = [];
   private toast: string | null = null;
   private toastT = 0;
@@ -174,6 +185,95 @@ export class Game {
     );
     this.hurtBubble.renderOrder = 999;
     this.root.add(this.hurtBubble);
+
+    // polvere spaziale che scorre verso il giocatore: dà la sensazione di velocità (non in AR)
+    if (!ar) {
+      const n = 700;
+      const pos = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) pos.set([(Math.random() - 0.5) * 60, (Math.random() - 0.3) * 30, -Math.random() * 80], i * 3);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+      this.dust = new THREE.Points(
+        g,
+        new THREE.PointsMaterial({ color: C.cyan, size: 0.09, transparent: true, opacity: 0.55, depthWrite: false }),
+      );
+      this.dust.frustumCulled = false;
+      this.root.add(this.dust);
+    }
+  }
+
+  /** Torna al menu iniziale (dalla schermata di fine partita). */
+  toLobby(): void {
+    if (this.phase !== "over") return;
+    this.clearField();
+    this.result = null;
+    this.phase = "lobby";
+  }
+
+  private fb(kind: import("./types.ts").Feedback, hand = this.lastHand): void {
+    this.cb.onFeedback?.(kind, hand);
+  }
+
+  /** Lampo alla bocca della pistola. */
+  private flash(origin: THREE.Vector3, dir: THREE.Vector3): void {
+    const s = this.scale;
+    let f = this.flashes.find((x) => x.t <= 0);
+    if (!f) {
+      f = { mesh: new THREE.Mesh(this.flashGeo, new THREE.MeshBasicMaterial({ color: C.cyan, transparent: true, depthWrite: false })), t: 0 };
+      this.flashes.push(f);
+      this.root.add(f.mesh);
+    }
+    f.t = 0.07;
+    f.mesh.visible = true;
+    f.mesh.position.copy(origin).addScaledVector(dir, 0.25 * s);
+    f.mesh.scale.setScalar(0.06 * s);
+  }
+
+  /** Onda d'urto: un anello che si allarga e svanisce, rivolto verso il giocatore. */
+  private shockwave(at: THREE.Vector3, color: number, size: number): void {
+    const mesh = new THREE.Mesh(
+      this.ringGeo,
+      new THREE.MeshBasicMaterial({ color, transparent: true, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    mesh.position.copy(at);
+    mesh.lookAt(this.head);
+    this.root.add(mesh);
+    this.rings.push({ mesh, t: 0, size });
+  }
+
+  private updateFx(dt: number): void {
+    for (let i = this.rings.length - 1; i >= 0; i--) {
+      const r = this.rings[i]!;
+      r.t += dt;
+      const k = r.t / 0.45;
+      r.mesh.scale.setScalar(r.size * (0.2 + k));
+      (r.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - k);
+      if (k >= 1) {
+        this.root.remove(r.mesh);
+        (r.mesh.material as THREE.Material).dispose();
+        this.rings.splice(i, 1);
+      }
+    }
+    for (const f of this.flashes) {
+      if (f.t <= 0) continue;
+      f.t -= dt;
+      f.mesh.scale.multiplyScalar(1 + dt * 12);
+      (f.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, f.t / 0.07);
+      if (f.t <= 0) f.mesh.visible = false;
+    }
+    if (this.dust) {
+      // la polvere vive nel riferimento del giocatore e scorre verso di lui
+      const speed = this.phase === "playing" ? (8 + this.wave) * (this.bossActive ? 1.6 : 1) : 3;
+      const pos = this.dust.geometry.attributes.position as THREE.BufferAttribute;
+      for (let i = 0; i < pos.count; i++) {
+        let z = pos.getZ(i) + speed * dt;
+        if (z > 2) z -= 82;
+        pos.setZ(i, z);
+      }
+      pos.needsUpdate = true;
+      this.dust.position.copy(this.anchor);
+      this.dust.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), this.forward);
+    }
   }
 
   // ---------------- comandi ----------------
@@ -212,6 +312,7 @@ export class Game {
     this.headDir.copy(headDir);
     this.sparks.update(dt);
     this.updateEffects(dt);
+    this.updateFx(dt);
 
     if (this.phase === "countdown") {
       this.countdown -= dt;
@@ -244,7 +345,7 @@ export class Game {
     this.forward.normalize();
     this.right.crossVectors(this.forward, UP).normalize();
 
-    this.player = this.nextPlayer ?? "Ospite";
+    this.player = this.nextPlayer ?? this.defaultName;
     this.nextPlayer = null;
     this.score = 0;
     this.lives = R.START_LIVES;
@@ -283,11 +384,13 @@ export class Game {
       this.spawnIn = interval * (0.7 + Math.random() * 0.6);
     }
 
-    this.fireCd -= dt;
     for (const a of aimers) {
-      if (a.pressed || (a.held && this.fireCd <= 0)) {
+      const cd = (this.fireCd.get(a.hand) ?? 0) - dt;
+      if (a.pressed || (a.held && cd <= 0)) {
         this.fire(a);
-        this.fireCd = R.FIRE_INTERVAL;
+        this.fireCd.set(a.hand, R.FIRE_INTERVAL);
+      } else {
+        this.fireCd.set(a.hand, cd);
       }
     }
 
@@ -350,6 +453,7 @@ export class Game {
       this.spawnBoss();
       this.showToast("BOSS IN ARRIVO!");
       this.sfx.bossAlarm();
+      this.fb("boss", -1);
     } else {
       this.showToast(`ONDATA ${this.wave}`);
     }
@@ -502,12 +606,15 @@ export class Game {
     e.flash = 0.08;
     if (e.hp > 0) {
       this.sfx.hit();
+      this.fb("hit");
       this.sparks.burst(e.obj.position, C.yellow, 8, 3 * this.scale);
       return;
     }
     this.sparks.burst(e.obj.position, C.yellow, 50, 9 * this.scale);
     this.sparks.burst(e.obj.position, C.white, 30, 5 * this.scale);
     this.sfx.explode(true);
+    this.fb("kill");
+    this.shockwave(e.obj.position, C.pink, R.ENEMY.radius * this.scale * 3);
     this.root.remove(e.obj);
     this.enemies.splice(i, 1);
     this.enemyKills++;
@@ -522,11 +629,12 @@ export class Game {
       if (ang !== 0) dir.applyAxisAngle(UP, ang).normalize();
       let bolt = this.bolts.find((b) => !b.alive);
       if (!bolt) {
-        bolt = { id: 0, mesh: new THREE.Mesh(this.boltGeo, this.boltMat), vel: new THREE.Vector3(), life: 0, alive: false };
+        bolt = { id: 0, hand: -1, mesh: new THREE.Mesh(this.boltGeo, this.boltMat), vel: new THREE.Vector3(), life: 0, alive: false };
         this.bolts.push(bolt);
         this.root.add(bolt.mesh);
       }
       bolt.id = this.nextId++;
+      bolt.hand = a.hand;
       bolt.alive = true;
       bolt.mesh.visible = true;
       bolt.life = 1.1;
@@ -536,6 +644,8 @@ export class Game {
       this.shots++;
     }
     this.sfx.shoot();
+    this.fb("shoot", a.hand);
+    this.flash(a.origin, a.dir);
   }
 
   private moveBolts(dt: number): void {
@@ -548,6 +658,7 @@ export class Game {
         this.killBolt(b);
         continue;
       }
+      this.lastHand = b.hand;
       if (this.phase === "playing" && this.boltHits(p0, b.mesh.position)) {
         this.hits++;
         this.killBolt(b);
@@ -580,6 +691,7 @@ export class Game {
         this.killMine(m);
         this.award(15);
         this.sfx.hit();
+        this.fb("hit");
         return true;
       }
     }
@@ -610,6 +722,7 @@ export class Game {
     r.flash = 0.08;
     if (r.hp > 0) {
       this.sfx.hit();
+      this.fb("hit");
       this.sparks.burst(r.obj.position, C.white, 6, 3 * this.scale);
       return;
     }
@@ -617,6 +730,8 @@ export class Game {
     const color = r.kind === "gold" ? C.green : C.yellow;
     this.sparks.burst(pos, color, r.kind === "large" ? 60 : 30, 7 * this.scale);
     this.sfx.explode(r.kind === "large");
+    this.fb("kill");
+    this.shockwave(pos, r.kind === "gold" ? C.green : C.yellow, r.radius * 3);
     this.removeRock(i);
     this.kills++;
     this.registerKill(R.ROCK[r.kind].points);
@@ -654,6 +769,7 @@ export class Game {
     if (this.lives < R.MAX_LIVES) options.push("life", "life");
     const kind = options[Math.floor(Math.random() * options.length)]!;
     this.sfx.power();
+    this.fb("power", -1);
     this.showToast(POWER_LABEL[kind].toUpperCase());
     if (kind === "life") {
       this.lives = Math.min(R.MAX_LIVES, this.lives + 1);
@@ -679,6 +795,7 @@ export class Game {
     this.streak = 0;
     this.hurtT = 0.5;
     this.sfx.damage();
+    this.fb("damage", -1);
     if (this.lives <= 0) this.gameOver();
   }
 
@@ -738,12 +855,16 @@ export class Game {
     b.hp--;
     b.flash = 0.06;
     this.sfx.hit();
+    this.fb("hit");
     this.sparks.burst(b.group.position, C.yellow, 5, 4 * this.scale);
     if (b.hp > 0) return;
     const pos = b.group.position.clone();
     this.sparks.burst(pos, C.pink, 140, 15 * this.scale);
     this.sparks.burst(pos, C.yellow, 140, 9 * this.scale);
     this.sfx.explode(true);
+    this.fb("boss", -1);
+    this.shockwave(pos, C.pink, 12 * this.scale);
+    this.shockwave(pos, C.yellow, 8 * this.scale);
     this.root.remove(b.group);
     this.boss = null;
     this.bossesBeaten++;

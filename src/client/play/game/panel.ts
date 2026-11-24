@@ -131,45 +131,99 @@ export class HudPanel extends CanvasPanel {
 }
 
 /** Schermate grandi: attesa, conto alla rovescia, risultato. */
+export type CardAction = "play" | "menu" | "exit";
+
+interface CardButton {
+  id: CardAction;
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  enabled: boolean;
+}
+
+/**
+ * Schermate grandi: menu, conto alla rovescia, risultato.
+ * Ha pulsanti veri: si puntano con il raggio e si premono con grilletto o pizzico.
+ */
 export class CardPanel extends CanvasPanel {
+  private buttons: CardButton[] = [];
+  private hits: THREE.Intersection[] = [];
+
   constructor(ar: boolean) {
-    super(1024, 640, ar ? 0.5 : 1.3, ar ? { dist: 1.2, drop: -0.02, speed: 2 } : { dist: 2, drop: -0.1, speed: 1.5 });
+    super(1024, 720, ar ? 0.5 : 1.3, ar ? { dist: 1.2, drop: -0.02, speed: 2 } : { dist: 2, drop: -0.1, speed: 1.5 });
   }
 
-  update(vm: ViewModel): void {
+  /** Quale pulsante colpisce il raggio (null se nessuno o se è disattivato). */
+  hitTest(ray: THREE.Raycaster): CardAction | null {
+    if (!this.mesh.visible || this.buttons.length === 0) return null;
+    this.hits.length = 0;
+    ray.intersectObject(this.mesh, false, this.hits);
+    const uv = this.hits[0]?.uv;
+    if (!uv) return null;
+    const x = uv.x * this.w;
+    const y = (1 - uv.y) * this.h;
+    const b = this.buttons.find((b) => b.enabled && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+    return b?.id ?? null;
+  }
+
+  private button(b: CardButton, hover: boolean, primary: boolean): void {
+    const c = this.ctx;
+    const color = !b.enabled ? "#444" : primary ? CSS.yellow : CSS.cyan;
+    if (hover && b.enabled) {
+      c.fillStyle = color;
+      c.fillRect(b.x, b.y, b.w, b.h);
+    } else {
+      c.fillStyle = "#000";
+      c.fillRect(b.x, b.y, b.w, b.h);
+    }
+    c.strokeStyle = color;
+    c.lineWidth = 6;
+    c.strokeRect(b.x + 3, b.y + 3, b.w - 6, b.h - 6);
+    this.text(b.label, b.x + b.w / 2, b.y + b.h / 2 + 14, 28, hover && b.enabled ? "#000" : color, PIXEL, "center");
+    this.buttons.push(b);
+  }
+
+  update(vm: ViewModel, hover: CardAction | null = null): void {
     const r = vm.result;
-    const key = [vm.phase, vm.nextPlayer, vm.countdown, vm.player, r?.stats.score, r?.rankToday, r?.isRecord, Math.ceil(vm.lockout), vm.online].join("|");
+    const key = [vm.phase, vm.nextPlayer, vm.countdown, vm.player, r?.stats.score, r?.rankToday, r?.isRecord, Math.ceil(vm.lockout), vm.online, hover].join("|");
     this.redraw(key, () => {
+      this.buttons = [];
       if (vm.phase === "countdown") {
-        this.frameBox(0, 0, 1024, 640, CSS.yellow);
-        this.title(String(Math.max(1, vm.countdown)), 512, 400, 260, CSS.yellow, CSS.pink);
-        this.text(`PRONTI, ${vm.player.toUpperCase()}`, 512, 560, 56, CSS.white, TERMINAL, "center");
+        this.frameBox(0, 0, 1024, 720, CSS.yellow);
+        this.title(String(Math.max(1, vm.countdown)), 512, 440, 280, CSS.yellow, CSS.pink);
+        this.text(`PRONTI, ${vm.player.toUpperCase()}`, 512, 620, 56, CSS.white, TERMINAL, "center");
       } else if (vm.phase === "over" && r) {
-        this.frameBox(0, 0, 1024, 640, CSS.pink);
-        this.title("GAME OVER", 512, 120, 64, CSS.pink, CSS.cyan);
-        this.text(`BEL VOLO, ${r.player.toUpperCase()}`, 512, 190, 52, CSS.white, TERMINAL, "center");
-        this.text(pad(r.stats.score), 512, 300, 84, CSS.yellow, PIXEL, "center");
+        this.frameBox(0, 0, 1024, 720, CSS.pink);
+        this.title("GAME OVER", 512, 110, 64, CSS.pink, CSS.cyan);
+        this.text(`BEL VOLO, ${r.player.toUpperCase()}`, 512, 180, 52, CSS.white, TERMINAL, "center");
+        this.text(pad(r.stats.score), 512, 290, 84, CSS.yellow, PIXEL, "center");
         const rank = r.isRecord ? "NUOVO RECORD!" : r.rankToday ? `${r.rankToday}° POSTO DI OGGI` : vm.online ? "SALVATAGGIO..." : "OFFLINE";
-        this.text(rank, 512, 372, 30, r.isRecord ? CSS.yellow : CSS.green, PIXEL, "center");
+        this.text(rank, 512, 360, 30, r.isRecord ? CSS.yellow : CSS.green, PIXEL, "center");
         this.text(
           `${r.stats.kills} ASTEROIDI  ${r.stats.enemies} NEMICI  ${Math.round(accuracy(r.stats) * 100)}% PRECISIONE`,
           512,
-          450,
+          430,
           42,
           CSS.cyan,
           TERMINAL,
           "center",
         );
-        const next = vm.nextPlayer ? `TOCCA A ${vm.nextPlayer.toUpperCase()}: PREMI` : "PASSA IL VISORE";
-        this.text(vm.lockout > 0 ? "TOGLI PURE IL VISORE" : next, 512, 570, 26, vm.lockout > 0 ? CSS.grey : CSS.yellow, PIXEL, "center");
+        const ready = vm.lockout <= 0;
+        const again = vm.nextPlayer ? `GIOCA: ${vm.nextPlayer.toUpperCase().slice(0, 10)}` : "GIOCA ANCORA";
+        this.button({ id: "play", label: again, x: 60, y: 500, w: 560, h: 110, enabled: ready }, hover === "play", true);
+        this.button({ id: "menu", label: "MENU", x: 660, y: 500, w: 304, h: 110, enabled: ready }, hover === "menu", false);
+        this.text(ready ? "punta un pulsante e premi" : "togli pure il visore", 512, 670, 40, CSS.grey, TERMINAL, "center");
       } else {
-        this.frameBox(0, 0, 1024, 640, CSS.cyan);
-        this.title("ORBITA", 512, 150, 96, CSS.yellow, CSS.pink);
-        this.text(vm.nextPlayer ? `TOCCA A ${vm.nextPlayer.toUpperCase()}` : "DIFENDI LA STAZIONE", 512, 260, 30, CSS.white, PIXEL, "center");
-        this.text("mira con il raggio", 512, 350, 50, CSS.cyan, TERMINAL, "center");
-        this.text("grilletto o pizzico per sparare", 512, 400, 50, CSS.cyan, TERMINAL, "center");
-        this.text("PREMI PER INIZIARE", 512, 520, 32, CSS.yellow, PIXEL, "center");
-        if (!vm.online) this.text("server non collegato: punteggio non salvato", 512, 600, 36, CSS.pink, TERMINAL, "center");
+        this.frameBox(0, 0, 1024, 720, CSS.cyan);
+        this.title("ORBITA", 512, 140, 96, CSS.yellow, CSS.pink);
+        this.text(vm.nextPlayer ? `TOCCA A ${vm.nextPlayer.toUpperCase()}` : "DIFENDI LA STAZIONE", 512, 240, 30, CSS.white, PIXEL, "center");
+        this.text("mira con il raggio, grilletto o pizzico per sparare", 512, 320, 42, CSS.cyan, TERMINAL, "center");
+        this.text("cristalli verdi = potenziamenti, frecce = pericoli fuori vista", 512, 370, 40, CSS.green, TERMINAL, "center");
+        this.button({ id: "play", label: "GIOCA", x: 60, y: 450, w: 560, h: 120, enabled: true }, hover === "play", true);
+        this.button({ id: "exit", label: "ESCI", x: 660, y: 450, w: 304, h: 120, enabled: true }, hover === "exit", false);
+        this.text(vm.online ? "il punteggio va nella classifica della fiera" : "server non collegato: punteggio non salvato", 512, 650, 38, vm.online ? CSS.grey : CSS.pink, TERMINAL, "center");
       }
     });
   }

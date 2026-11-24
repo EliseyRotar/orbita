@@ -386,6 +386,19 @@ body[data-phase="playing"] #stage {
   font-size: 32px;
 }
 
+.over-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px;
+}
+.over .btn {
+  min-width: 220px;
+}
+.over .btn.primary {
+  min-width: 320px;
+}
+
 /* ---------- barra postazione ---------- */
 
 .device {
@@ -603,8 +616,12 @@ body[data-phase="countdown"] .device {
   .stats dd {
     font-size: 22px;
   }
-  .over .btn {
+  .over-actions {
     width: 100%;
+  }
+  .over .btn,
+  .over .btn.primary {
+    flex: 1 1 140px;
     min-width: 0;
   }
 

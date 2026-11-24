@@ -8,7 +8,7 @@ import { Link } from "../common/net.ts";
 import { Sfx } from "./game/audio.ts";
 import { Game } from "./game/Game.ts";
 import { C } from "./game/palette.ts";
-import { CardPanel, HudPanel } from "./game/panel.ts";
+import { CardPanel, HudPanel, type CardAction } from "./game/panel.ts";
 import { OffscreenArrows } from "./game/arrows.ts";
 import { POWER_LABEL, type Aimer, type Mode, type ViewModel } from "./game/types.ts";
 import { addLights, buildEnvironment } from "./game/world.ts";
@@ -142,7 +142,35 @@ let pendingName: string | null = null;
 let watched = false;
 /** Rotazione del modello della pistola per avere la canna lungo -Z. */
 const GUN_YAW = Number(params.get("gunyaw") ?? 0);
-const controllers: { obj: THREE.Group; held: boolean; pressed: boolean; ray: THREE.Object3D }[] = [];
+interface Controller {
+  obj: THREE.Group;
+  hand: number;
+  held: boolean;
+  pressed: boolean;
+  ray: THREE.Object3D;
+  source: XRInputSource | null;
+}
+const controllers: Controller[] = [];
+let cardHover: CardAction | null = null;
+const cardRay = new THREE.Raycaster();
+
+/** Vibrazione del controller (Quest). intensity 0..1, durata in ms. hand -1 = tutte e due. */
+function rumble(hand: number, intensity: number, ms: number): void {
+  for (const c of controllers) {
+    if (hand !== -1 && c.hand !== hand) continue;
+    const act = c.source?.gamepad?.hapticActuators?.[0] as unknown as { pulse?: (v: number, d: number) => Promise<boolean> } | undefined;
+    act?.pulse?.(intensity, ms)?.catch(() => {});
+  }
+}
+
+const RUMBLE: Record<import("./game/types.ts").Feedback, [number, number]> = {
+  shoot: [0.12, 18],
+  hit: [0.35, 35],
+  kill: [0.65, 70],
+  power: [0.6, 160],
+  damage: [1, 320],
+  boss: [0.9, 400],
+};
 
 function buildScene(mode: Mode): void {
   scene = new THREE.Scene();
@@ -167,11 +195,13 @@ function buildScene(mode: Mode): void {
       onEvent: (kind, text) => link.send({ t: "game:event", kind, text }),
       onEnd: (stats) => link.send({ t: "game:end", stats }),
       onAbort: () => link.send({ t: "game:abort" }),
+      onFeedback: (kind, hand) => rumble(hand, ...RUMBLE[kind]),
     },
     models,
   );
   game.online = link.online;
   game.setNextPlayer(pendingName);
+  game.defaultName = label;
   if (mode === "desktop" || mode === "mobile") queueMicrotask(fitView);
   scene.add(game.root);
 
@@ -201,11 +231,15 @@ function buildScene(mode: Mode): void {
       ray.add(tip);
       ray.visible = false;
       obj.add(ray);
-      const entry = { obj, held: false, pressed: false, ray };
-      obj.addEventListener("connected", () => (ray.visible = true));
+      const entry: Controller = { obj, hand: i, held: false, pressed: false, ray, source: null };
+      obj.addEventListener("connected", (ev) => {
+        entry.source = (ev as unknown as { data: XRInputSource }).data ?? null;
+        ray.visible = true;
+      });
       obj.addEventListener("disconnected", () => {
         ray.visible = false;
         entry.held = false;
+        entry.source = null;
       });
       obj.addEventListener("selectstart", () => {
         entry.held = true;
@@ -268,6 +302,7 @@ ui.label.addEventListener("change", () => {
   label = cleanName(ui.label.value) || label;
   ui.label.value = label;
   store.set("orbita.label", label);
+  if (game) game.defaultName = label;
   link.send({ t: "device:label", label });
   ui.status.textContent = `collegato come ${label}`;
 });
@@ -291,6 +326,10 @@ function startDesktop(): void {
 
 ui.play.addEventListener("click", startDesktop);
 ui.again.addEventListener("click", startDesktop);
+document.querySelector("#btn-menu")!.addEventListener("click", () => {
+  game?.toLobby();
+  ui.name.value = "";
+});
 ui.name.addEventListener("keydown", (e) => {
   if (e.key === "Enter") startDesktop();
 });
@@ -355,7 +394,7 @@ function renderDom(vm: ViewModel): void {
 // ---------------- input PC / telefono ----------------
 
 const pointer = new THREE.Vector2(0, 0);
-const mouseAim: Aimer = { origin: new THREE.Vector3(), dir: new THREE.Vector3(), held: false, pressed: false };
+const mouseAim: Aimer = { origin: new THREE.Vector3(), dir: new THREE.Vector3(), held: false, pressed: false, hand: -1 };
 const raycaster = new THREE.Raycaster();
 
 const movePointer = (e: PointerEvent) => {
@@ -423,19 +462,24 @@ async function setupXrButtons(): Promise<void> {
     }
     if (!savedLabel) {
       label = guessLabel();
+      if (game) game.defaultName = label;
       ui.label.value = label;
       link.send({ t: "device:label", label });
       ui.status.textContent = `collegato come ${label}`;
     }
   }
   // sui telefoni si gioca a schermo: niente pulsanti AR/VR del telefono, confondono
-  const phone = isTouch && !isHoloLens;
+  const phone = isTouch && !isHoloLens && !isQuest;
   ui.vr.hidden = !vr || phone;
   ui.ar.hidden = !ar || phone;
   xrSupport = { vr, ar };
   seeThrough = isHoloLens;
+  // un visore VR (Quest): la VR immersiva è la scelta principale,
+  // l'AR con passthrough diventa "realtà mista", secondaria
+  const vrHeadset = vr && !isHoloLens && !phone;
+  if (vrHeadset) ui.ar.textContent = "REALTÀ MISTA";
   // sul Quest la VR è l'esperienza principale, sull'HoloLens l'AR
-  const primary = vr && (isQuest || !ar) ? ui.vr : ar ? ui.ar : null;
+  const primary = vrHeadset ? ui.vr : ar ? ui.ar : vr ? ui.vr : null;
   if (primary) {
     primary.classList.add("primary");
     ui.play.classList.remove("primary");
@@ -556,6 +600,22 @@ buildScene(isTouch ? "mobile" : "desktop");
 ui.loading.hidden = true;
 void setupXrButtons();
 
+/**
+ * Pulsanti del pannello nel visore. Un click fuori dai pulsanti nel menu avvia comunque
+ * la partita: chi non ha mai usato un visore preme il grilletto e basta.
+ */
+function menuAction(hit: CardAction | null): void {
+  if (!game) return;
+  if (hit === "exit") {
+    void renderer.xr.getSession()?.end();
+  } else if (hit === "menu") {
+    game.toLobby();
+    sfx.start();
+  } else if (hit === "play" || (hit === null && game.phase === "lobby")) {
+    game.press(headPos, headDir);
+  }
+}
+
 // ---------------- ciclo principale ----------------
 
 const timer = new THREE.Timer();
@@ -576,6 +636,8 @@ renderer.setAnimationLoop((time) => {
     xrCam.getWorldPosition(headPos);
     xrCam.getWorldDirection(headDir);
     xrCam.getWorldQuaternion(headQuat);
+    const inMenu = game.phase === "lobby" || game.phase === "over";
+    let hover: CardAction | null = null;
     for (const c of controllers) {
       if (!c.ray.visible) {
         c.pressed = false;
@@ -583,10 +645,17 @@ renderer.setAnimationLoop((time) => {
       }
       const origin = new THREE.Vector3().setFromMatrixPosition(c.obj.matrixWorld);
       const dir = new THREE.Vector3(0, 0, -1).transformDirection(c.obj.matrixWorld);
-      aimers.push({ origin, dir, held: c.held, pressed: c.pressed });
-      if (c.pressed && game.phase !== "playing" && game.phase !== "countdown") game.press(headPos, headDir);
+      aimers.push({ origin, dir, held: c.held, pressed: c.pressed, hand: c.hand });
+      if (inMenu && card) {
+        cardRay.set(origin, dir);
+        const hit = card.hitTest(cardRay);
+        if (hit) hover = hit;
+        if (c.pressed) menuAction(hit);
+      }
       c.pressed = false;
     }
+    if (hover !== cardHover && hover) rumble(-1, 0.15, 15);
+    cardHover = hover;
   } else {
     // leggero movimento della visuale verso il mirino: dà profondità senza nausea
     sway += (pointer.x * 0.12 - sway) * Math.min(1, dt * 4);
@@ -596,7 +665,7 @@ renderer.setAnimationLoop((time) => {
     raycaster.setFromCamera(pointer, camera);
     mouseAim.origin.copy(headPos).add(new THREE.Vector3(0, -0.25, 0));
     mouseAim.dir.copy(raycaster.ray.direction).multiplyScalar(40).add(headPos).sub(mouseAim.origin).normalize();
-    aimers.push({ ...mouseAim, origin: mouseAim.origin.clone(), dir: mouseAim.dir.clone() });
+    aimers.push({ ...mouseAim, origin: mouseAim.origin.clone(), dir: mouseAim.dir.clone(), hand: -1 });
     mouseAim.pressed = false;
   }
 
@@ -616,7 +685,7 @@ renderer.setAnimationLoop((time) => {
       hud.update(vm);
       hud.place(headPos, headQuat, dt);
     } else {
-      card.update(vm);
+      card.update(vm, cardHover);
       card.place(headPos, headQuat, dt);
     }
   }

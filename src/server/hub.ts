@@ -192,7 +192,7 @@ export class Hub {
         dev.label = cleanName(msg.label) || dev.label;
         break;
       case "game:start": {
-        const player = cleanName(msg.player) || dev.nextPlayer || "Ospite";
+        const player = cleanName(msg.player) || dev.nextPlayer || dev.label;
         dev.nextPlayer = null;
         dev.status = "playing";
         dev.live = { player, score: 0, lives: 3, combo: 1, wave: 1, startedAt: Date.now() };

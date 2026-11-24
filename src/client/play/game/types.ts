@@ -13,7 +13,12 @@ export interface Aimer {
   held: boolean;
   /** Premuto in questo frame. */
   pressed: boolean;
+  /** Mano che spara: 0 sinistra/prima, 1 destra/seconda, -1 mouse o tocco. */
+  hand: number;
 }
+
+/** Eventi da far "sentire" con la vibrazione dei controller. */
+export type Feedback = "shoot" | "hit" | "kill" | "damage" | "power" | "boss";
 
 export interface ActivePower {
   kind: PowerKind;
@@ -56,6 +61,8 @@ export interface GameCallbacks {
   onEnd(stats: GameStats): void;
   /** Partita annullata prima di iniziare (non finisce in classifica). */
   onAbort(): void;
+  /** Vibrazione: hand = -1 per entrambe le mani. */
+  onFeedback?(kind: Feedback, hand: number): void;
 }
 
 export const POWER_LABEL: Record<PowerKind, string> = {

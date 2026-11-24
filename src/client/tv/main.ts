@@ -4,6 +4,7 @@ import "./tv.css";
 import { accuracy, type DeviceInfo, type FeedItem, type GameRecord, type Platform, type Snapshot } from "../../shared/protocol.ts";
 import { esc, fmt, minutes } from "../common/format.ts";
 import { Link } from "../common/net.ts";
+import QRCode from "qrcode";
 
 const $ = (id: string) => document.getElementById(id)!;
 const link = new Link(() => ({ t: "hello", role: "tv" }));
@@ -33,24 +34,28 @@ link.on((msg) => {
 });
 
 // i secondi delle partite in corso avanzano anche senza nuovi messaggi
-setInterval(() => lastSnap && renderDevices(lastSnap.devices, Date.now()), 1000);
+setInterval(() => lastSnap && renderDevices(lastSnap.devices, Date.now(), lastSnap.phones), 1000);
 
 const pad = (n: number) => String(Math.max(0, Math.floor(n))).padStart(6, "0");
 
 function render(s: Snapshot): void {
   renderLeaderboard(s.leaderboardToday);
-  renderDevices(s.devices, s.now);
+  renderDevices(s.devices, s.now, s.phones);
   renderTotals(s);
   renderFeed(s.feed);
   renderRecord(s);
   const cfg = s.config;
-  if ($("qr").dataset.url !== cfg.qrUrl) {
-    $("qr").innerHTML = cfg.qrSvg;
-    $("qr").dataset.url = cfg.qrUrl;
-  }
+  void drawQr("qr", cfg.qrUrl);
+  void drawQr("qr-play", cfg.playUrl || location.origin);
   $("qr-label").textContent = cfg.qrLabel.toUpperCase();
-  $("school").textContent = cfg.school;
-  $("course").textContent = cfg.course;
+  $("course").textContent = `${cfg.school}, ${cfg.course}`;
+}
+
+async function drawQr(id: string, url: string): Promise<void> {
+  const el = $(id);
+  if (el.dataset.url === url) return;
+  el.dataset.url = url;
+  el.innerHTML = await QRCode.toString(url, { type: "svg", margin: 0, errorCorrectionLevel: "M" });
 }
 
 function renderLeaderboard(rows: GameRecord[]): void {
@@ -69,14 +74,17 @@ function renderLeaderboard(rows: GameRecord[]): void {
     .join("");
 }
 
-function renderDevices(devices: DeviceInfo[], now: number): void {
+function renderDevices(devices: DeviceInfo[], now: number, phones: Snapshot["phones"]): void {
   const list = $("devices");
   const visible = devices.filter((d) => d.online);
+  const phoneRow = phones.playing
+    ? `<li class="dev live"><span class="dev-label">TELEFONI</span><span class="dev-who">${phones.playing} IN GIOCO DAL QR</span></li>`
+    : "";
   if (visible.length === 0) {
-    list.innerHTML = `<li class="dev idle"><span>nessun visore collegato</span></li>`;
+    list.innerHTML = `<li class="dev idle"><span>nessun visore collegato</span></li>${phoneRow}`;
     return;
   }
-  list.innerHTML = visible
+  list.innerHTML = phoneRow + visible
     .map((d) => {
       const live = d.live;
       const who = live ? live.player.toUpperCase() : d.nextPlayer ? `${d.nextPlayer.toUpperCase()} SI PREPARA` : "LIBERO";

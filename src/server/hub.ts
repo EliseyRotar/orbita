@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-import type { WebSocket } from "ws";
 import {
   cleanName,
   type AdminMsg,
@@ -14,12 +12,28 @@ import {
   type Snapshot,
   type SpectatorMsg,
 } from "../shared/protocol.ts";
-import { fairDay, type Store } from "./store.ts";
+import { fairDay, type Records } from "./records.ts";
 
 type Role = "device" | "tv" | "admin" | "spectator";
 
+/** Una connessione WebSocket, qualunque sia il server (Node `ws` o Cloudflare). */
+export interface Sock {
+  send(data: string): void;
+  readonly open: boolean;
+}
+
+export interface HubOptions {
+  /** PIN del pannello operatore. */
+  adminPin: string;
+  /** Online il pannello operatore deve avere un PIN: senza, l'accesso è negato. */
+  requirePin: boolean;
+}
+
 interface Conn {
-  ws: WebSocket;
+  ws: Sock;
+  /** Limite di messaggi: protegge la quota gratuita di Cloudflare da client impazziti. */
+  tokens: number;
+  lastRefill: number;
   role: Role | null;
   deviceId: string | null;
   /** Spettatore: postazione scelta a mano (null = automatico). */
@@ -40,54 +54,81 @@ export class Hub {
   private devices = new Map<string, DeviceInfo>();
   private queue: string[] = [];
   private feed: FeedItem[] = [];
-  private broadcastTimer: NodeJS.Timeout | null = null;
+  private broadcastTimer: ReturnType<typeof setTimeout> | null = null;
   /** Postazioni che stanno mandando fotogrammi agli spettatori. */
   private watched = new Set<string>();
 
   constructor(
-    private readonly store: Store,
+    private readonly store: Records,
     private readonly config: () => PublicConfig,
-    private readonly adminPin: string,
+    private readonly opts: HubOptions,
   ) {
     // ogni 30 s ricalcola (cambio giorno, durata partite) anche senza eventi
-    setInterval(() => this.changed(), 30_000).unref();
+    const t = setInterval(() => this.changed(), 30_000) as unknown as { unref?: () => void };
+    t.unref?.();
   }
 
-  attach(ws: WebSocket): void {
-    const conn: Conn = { ws, role: null, deviceId: null, pick: null, following: null };
+  /** Nuova connessione: restituisce le funzioni da chiamare per i messaggi e la chiusura. */
+  connect(ws: Sock): { message(raw: string): void; close(): void } {
+    const conn: Conn = { ws, tokens: 40, lastRefill: Date.now(), role: null, deviceId: null, pick: null, following: null };
     this.conns.add(conn);
-    ws.on("message", (raw) => {
-      let msg: ClientMsg;
-      try {
-        msg = JSON.parse(String(raw));
-      } catch {
-        return;
-      }
-      try {
-        this.handle(conn, msg);
-      } catch (err) {
-        console.error("[hub] errore messaggio", msg?.t, err);
-      }
-    });
-    ws.on("close", () => {
-      this.conns.delete(conn);
-      if (conn.role === "spectator") this.updateWatch();
-      if (conn.deviceId) {
-        const dev = this.devices.get(conn.deviceId);
-        const stillOpen = [...this.conns].some((c) => c.deviceId === conn.deviceId);
-        if (dev && !stillOpen) {
-          dev.online = false;
-          this.changed();
+    return {
+      message: (raw) => {
+        if (!this.allow(conn) || raw.length > 64 * 1024) return;
+        let msg: ClientMsg;
+        try {
+          msg = JSON.parse(raw);
+        } catch {
+          return;
         }
-      }
-    });
+        try {
+          this.handle(conn, msg);
+        } catch (err) {
+          console.error("[hub] errore messaggio", msg?.t, err);
+        }
+      },
+      close: () => this.disconnect(conn),
+    };
+  }
+
+  /** Al massimo ~20 messaggi al secondo per connessione (con piccola riserva). */
+  private allow(conn: Conn): boolean {
+    const now = Date.now();
+    conn.tokens = Math.min(40, conn.tokens + ((now - conn.lastRefill) / 1000) * 20);
+    conn.lastRefill = now;
+    if (conn.tokens < 1) return false;
+    conn.tokens -= 1;
+    return true;
+  }
+
+  private disconnect(conn: Conn): void {
+    if (!this.conns.delete(conn)) return;
+    if (conn.role === "spectator") this.updateWatch();
+    if (!conn.deviceId) return;
+    const dev = this.devices.get(conn.deviceId);
+    const stillOpen = [...this.conns].some((c) => c.deviceId === conn.deviceId);
+    if (!dev || stillOpen) return;
+    if (dev.platform === "mobile") {
+      // i telefoni dei visitatori non restano nell'elenco: vanno e vengono
+      this.devices.delete(dev.id);
+    } else {
+      dev.online = false;
+    }
+    this.changed();
   }
 
   private handle(conn: Conn, msg: ClientMsg): void {
     if (msg.t === "hello") {
-      if (msg.role === "admin" && this.adminPin && msg.pin !== this.adminPin) {
-        this.send(conn.ws, { t: "denied", reason: "PIN errato" });
-        return;
+      if (msg.role === "admin") {
+        const { adminPin, requirePin } = this.opts;
+        if (requirePin && !adminPin) {
+          this.send(conn.ws, { t: "denied", reason: "PIN operatore non configurato sul server" });
+          return;
+        }
+        if (adminPin && msg.pin !== adminPin) {
+          this.send(conn.ws, { t: "denied", reason: "PIN errato" });
+          return;
+        }
       }
       conn.role = msg.role;
       if (msg.role === "device") this.registerDevice(conn, msg.deviceId, msg.label, msg.platform);
@@ -111,7 +152,7 @@ export class Hub {
   }
 
   private registerDevice(conn: Conn, rawId: string, rawLabel: string, platform: Platform): void {
-    const id = String(rawId).slice(0, 64) || randomUUID();
+    const id = String(rawId).slice(0, 64) || crypto.randomUUID();
     conn.deviceId = id;
     const label = cleanName(rawLabel) || "Postazione";
     const existing = this.devices.get(id);
@@ -175,13 +216,16 @@ export class Hub {
         if (!dev.live) break;
         const s = msg.stats;
         const num = (v: unknown) => (Number.isFinite(v) ? Math.max(0, Math.floor(v as number)) : 0);
+        // controllo di buon senso: nessuno fa più di ~400 punti al secondo (più i boss)
+        const elapsed = (Date.now() - dev.live.startedAt) / 1000;
+        const maxScore = Math.round(elapsed * 400 + num(s.bosses) * 3000 + 2000);
         const prevBestAll = this.store.leaderboard(null, 1)[0]?.score ?? 0;
         const prevBestToday = this.store.leaderboard(fairDay(), 1)[0]?.score ?? 0;
         const rec = this.store.add({
           player: dev.live.player,
           platform: dev.platform,
           deviceLabel: dev.label,
-          score: num(s.score),
+          score: Math.min(num(s.score), maxScore),
           kills: num(s.kills),
           enemies: num(s.enemies),
           shots: num(s.shots),
@@ -189,7 +233,7 @@ export class Hub {
           maxCombo: num(s.maxCombo),
           bosses: num(s.bosses),
           wave: num(s.wave),
-          durationMs: Math.min(num(s.durationMs), 60 * 60 * 1000),
+          durationMs: Math.min(num(s.durationMs), elapsed * 1000 + 5000, 60 * 60 * 1000),
         });
         const rankToday = this.store.rankOf(rec, rec.day);
         const rankAll = this.store.rankOf(rec, null);
@@ -273,7 +317,7 @@ export class Hub {
   }
 
   private pushFeed(kind: FeedKind, text: string, record?: FeedItem["record"]): void {
-    this.feed.unshift({ id: randomUUID(), kind, text, at: Date.now(), record });
+    this.feed.unshift({ id: crypto.randomUUID(), kind, text, at: Date.now(), record });
     if (this.feed.length > FEED_MAX) this.feed.length = FEED_MAX;
   }
 
@@ -282,7 +326,10 @@ export class Hub {
     return {
       now: Date.now(),
       today,
-      devices: [...this.devices.values()].sort((a, b) => a.label.localeCompare(b.label, "it", { numeric: true })),
+      devices: [...this.devices.values()]
+        .filter((d) => d.platform !== "mobile")
+        .sort((a, b) => a.label.localeCompare(b.label, "it", { numeric: true })),
+      phones: this.phoneCount(),
       leaderboardToday: this.store.leaderboard(today, 15),
       leaderboardAll: this.store.leaderboard(null, 15),
       recent: this.store.recent(25),
@@ -292,6 +339,17 @@ export class Hub {
       queue: this.queue,
       config: this.config(),
     };
+  }
+
+  private phoneCount(): { online: number; playing: number } {
+    let online = 0;
+    let playing = 0;
+    for (const d of this.devices.values()) {
+      if (d.platform !== "mobile" || !d.online) continue;
+      online++;
+      if (d.live) playing++;
+    }
+    return { online, playing };
   }
 
   /** Raggruppa le modifiche: al massimo ~6 snapshot al secondo verso TV e operatore. */
@@ -350,11 +408,16 @@ export class Hub {
     for (const c of this.conns) if (c.deviceId === id) this.send(c.ws, msg);
   }
 
-  private send(ws: WebSocket, msg: ServerMsg): void {
+  private send(ws: Sock, msg: ServerMsg): void {
     this.sendRaw(ws, JSON.stringify(msg));
   }
 
-  private sendRaw(ws: WebSocket, data: string): void {
-    if (ws.readyState === ws.OPEN) ws.send(data);
+  private sendRaw(ws: Sock, data: string): void {
+    if (!ws.open) return;
+    try {
+      ws.send(data);
+    } catch {
+      /* connessione appena chiusa */
+    }
   }
 }

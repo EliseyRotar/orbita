@@ -235,7 +235,7 @@ link.on((msg) => {
 setInterval(() => {
   if (!watched || !game) return;
   if (game.phase === "playing" || game.phase === "countdown") link.send({ t: "game:frame", frame: game.frame() });
-}, 100);
+}, 200);
 
 // ---------------- interfaccia DOM (PC / telefono) ----------------
 

@@ -21,7 +21,7 @@ link.on((msg) => {
   if (msg.t === "denied") {
     $("pin-form").hidden = false;
     $("app").hidden = true;
-    $("pin-error").textContent = pin ? "PIN errato" : "";
+    $("pin-error").textContent = pin || msg.reason.includes("configurato") ? msg.reason : "";
   } else if (msg.t === "welcome") {
     $("pin-form").hidden = true;
     $("app").hidden = false;
@@ -172,5 +172,8 @@ function render(): void {
       </tr>`,
     )
     .join("");
-  $("play-url").textContent = s.config.playUrl;
+  $("play-url").textContent = s.config.playUrl || `${location.origin}/`;
+  $("phones").textContent = s.phones.online
+    ? `${s.phones.online} telefoni di visitatori collegati, ${s.phones.playing} in partita`
+    : "Nessun telefono di visitatori collegato";
 }

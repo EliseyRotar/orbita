@@ -2,7 +2,6 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import https from "node:https";
 import { extname, join, normalize, resolve } from "node:path";
-import QRCode from "qrcode";
 import { WebSocketServer } from "ws";
 import type { PublicConfig } from "../shared/protocol.ts";
 import { lanAddresses, loadOrCreateCert } from "./certs.ts";
@@ -16,17 +15,16 @@ const store = new Store(join(cfg.dataDir, "games.json"));
 
 const ips = lanAddresses();
 const playUrl = `https://${ips[0] ?? "localhost"}:${cfg.httpsPort}/`;
-const qrSvg = await QRCode.toString(cfg.qrUrl, { type: "svg", margin: 0, errorCorrectionLevel: "M" });
 const publicConfig: PublicConfig = {
   title: cfg.title,
   school: cfg.school,
   course: cfg.course,
   qrUrl: cfg.qrUrl,
   qrLabel: cfg.qrLabel,
-  qrSvg,
   playUrl,
 };
-const hub = new Hub(store, () => publicConfig, cfg.adminPin);
+// in locale il PIN è facoltativo: la rete è quella dello stand
+const hub = new Hub(store, () => publicConfig, { adminPin: cfg.adminPin, requirePin: false });
 
 // ---------- pagine e file statici ----------
 
@@ -35,9 +33,9 @@ let handler: Handler;
 
 const PAGES: Record<string, string> = {
   "/": "index.html",
-  "/tv": "tv.html",
-  "/monitor": "tv.html",
-  "/spettatore": "spectator.html",
+  "/tv": "monitor.html",
+  "/monitor": "monitor.html",
+  "/spettatore": "spettatore.html",
   "/admin": "admin.html",
 };
 
@@ -107,7 +105,16 @@ const route: Handler = (req, res) => {
 // ---------- server HTTP (localhost/TV) + HTTPS (visori) ----------
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
-wss.on("connection", (ws) => hub.attach(ws));
+wss.on("connection", (ws) => {
+  const conn = hub.connect({
+    send: (data) => ws.send(data),
+    get open() {
+      return ws.readyState === ws.OPEN;
+    },
+  });
+  ws.on("message", (raw) => conn.message(String(raw)));
+  ws.on("close", () => conn.close());
+});
 
 function upgrade(server: http.Server | https.Server) {
   server.on("upgrade", (req, socket, head) => {

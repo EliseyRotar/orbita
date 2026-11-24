@@ -302,7 +302,7 @@ export class Game {
 
     this.tickT -= dt;
     if (this.tickT <= 0) {
-      this.tickT = 0.3;
+      this.tickT = 0.5;
       this.cb.onTick(this.score, this.lives, R.comboLevel(this.streak), this.wave);
     }
   }

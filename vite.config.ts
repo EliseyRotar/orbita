@@ -10,9 +10,9 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve(import.meta.dirname, "index.html"),
-        tv: resolve(import.meta.dirname, "tv.html"),
+        monitor: resolve(import.meta.dirname, "monitor.html"),
         admin: resolve(import.meta.dirname, "admin.html"),
-        spectator: resolve(import.meta.dirname, "spectator.html"),
+        spettatore: resolve(import.meta.dirname, "spettatore.html"),
       },
     },
   },

@@ -7,13 +7,16 @@
     "build": "vite build",
     "start": "tsx src/server/index.ts",
     "fiera": "npm run build && npm start",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build && wrangler deploy --dry-run --outdir .wrangler/dry",
+    "cf:dev": "vite build && wrangler dev",
+    "deploy": "vite build && wrangler deploy"
   },
   "license": "MIT",
   "type": "module",
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261124.1",
     "@types/node": "^26.6.6",
     "@types/qrcode": "^1.5.6",
     "@types/three": "^0.187.0",
@@ -21,7 +24,8 @@
     "iwer": "^2.8.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
-    "vitest": "^5.1.1"
+    "vitest": "^5.1.1",
+    "wrangler": "^4.167.0"
   },
   "dependencies": {
     "@fontsource/press-start-2p": "^5.3.0",

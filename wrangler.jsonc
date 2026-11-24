@@ -1,0 +1,25 @@
+// Configurazione Cloudflare Workers per Orbita online.
+// Deploy: `npm run deploy` (compila il client e pubblica).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "orbita",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "FAIR", "class_name": "Fair" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Fair"] }],
+  "vars": {
+    "SCHOOL": "ITI G. Marconi · Dalmine",
+    "COURSE": "Informatica e Telecomunicazioni",
+    "QR_URL": "https://www.itisdalmine.edu.it",
+    "QR_LABEL": "Scopri il Marconi"
+  },
+  "observability": { "enabled": true }
+}

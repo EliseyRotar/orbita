@@ -77,7 +77,7 @@ export interface PublicConfig {
   course: string;
   qrUrl: string;
   qrLabel: string;
-  qrSvg: string;
+  /** Indirizzo del gioco per i visori; vuoto = lo stesso sito della pagina. */
   playUrl: string;
 }
 
@@ -92,6 +92,8 @@ export interface Snapshot {
   totalsAll: Totals;
   feed: FeedItem[];
   queue: string[];
+  /** Telefoni dei visitatori collegati (non elencati uno per uno). */
+  phones: { online: number; playing: number };
   config: PublicConfig;
 }
 

@@ -239,7 +239,7 @@ renderer.setAnimationLoop((time) => {
   timer.update(time);
   const dt = Math.min(0.05, timer.getDelta());
   const t = time / 1000;
-  const k = 1 - Math.exp(-dt * 12);
+  const k = 1 - Math.exp(-dt * 8);
 
   for (const s of shown.values()) {
     s.obj.position.lerp(s.target, k);

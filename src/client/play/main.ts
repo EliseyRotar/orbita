@@ -165,6 +165,7 @@ function buildScene(mode: Mode): void {
   );
   game.online = link.online;
   game.setNextPlayer(pendingName);
+  if (mode === "desktop" || mode === "mobile") queueMicrotask(fitView);
   scene.add(game.root);
 
   controllers.length = 0;
@@ -369,11 +370,21 @@ window.addEventListener("keydown", (e) => {
 window.addEventListener("keyup", (e) => {
   if (e.code === "Space") mouseAim.held = false;
 });
-window.addEventListener("resize", () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+/**
+ * Inquadratura adatta allo schermo: in verticale (telefono) si allarga il campo visivo
+ * e si stringe il cono dove nascono asteroidi e navicelle, così restano sempre visibili.
+ */
+function fitView(): void {
+  const aspect = window.innerWidth / window.innerHeight;
+  camera.aspect = aspect;
+  camera.fov = aspect < 1 ? 82 : 70;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-});
+  const vHalf = THREE.MathUtils.degToRad(camera.fov) / 2;
+  const hHalf = Math.atan(Math.tan(vHalf) * aspect);
+  game?.setViewCone(Math.min(0.62, hHalf * 0.78), -Math.min(0.12, vHalf * 0.35), Math.min(0.3, vHalf * 0.55));
+}
+window.addEventListener("resize", fitView);
 
 // ---------------- WebXR ----------------
 

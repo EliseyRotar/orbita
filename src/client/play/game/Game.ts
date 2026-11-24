@@ -330,6 +330,14 @@ export class Game {
       .addScaledVector(UP, Math.sin(el));
   }
 
+  /** Cono in cui nascono i nemici su PC/telefono (radianti): dipende dalla forma dello schermo. */
+  private cone = { az: 0.62, elMin: -0.12, elMax: 0.3 };
+
+  /** Su schermi stretti (telefono in verticale) gli oggetti devono nascere dentro l'inquadratura. */
+  setViewCone(az: number, elMin: number, elMax: number): void {
+    this.cone = { az, elMin, elMax };
+  }
+
   private get desktop(): boolean {
     return this.mode === "desktop" || this.mode === "mobile";
   }
@@ -337,8 +345,9 @@ export class Game {
   private spawnRock(kind: R.RockKind, at?: THREE.Vector3, size?: number): void {
     const s = this.scale;
     const spec = R.ROCK[kind];
-    const az = (Math.random() * 2 - 1) * (this.desktop ? 0.62 : 0.95);
-    const el = this.desktop ? -0.12 + Math.random() * 0.42 : -0.1 + Math.random() * 0.55;
+    const v = this.cone;
+    const az = (Math.random() * 2 - 1) * (this.desktop ? v.az : 0.95);
+    const el = this.desktop ? v.elMin + Math.random() * (v.elMax - v.elMin) : -0.1 + Math.random() * 0.55;
     const pos = at
       ? at.clone()
       : this.dirFrom(az, el, new THREE.Vector3()).multiplyScalar(R.SPAWN_DISTANCE * s).add(this.anchor);
@@ -403,8 +412,8 @@ export class Game {
       obj,
       hp: R.ENEMY.hp,
       t: 0,
-      az: (Math.random() * 2 - 1) * (this.desktop ? 0.45 : 0.7),
-      el: 0.05 + Math.random() * (this.desktop ? 0.2 : 0.35),
+      az: (Math.random() * 2 - 1) * (this.desktop ? this.cone.az * 0.7 : 0.7),
+      el: this.desktop ? this.cone.elMin * 0.3 + Math.random() * this.cone.elMax * 0.6 : 0.05 + Math.random() * 0.35,
       phase: Math.random() * Math.PI * 2,
       fireIn: 2.5 + Math.random(),
       flash: 0,

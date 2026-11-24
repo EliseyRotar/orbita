@@ -16,7 +16,6 @@ import { addLights, buildEnvironment } from "../play/game/world.ts";
  */
 
 const $ = (id: string) => document.getElementById(id)!;
-const link = new Link(() => ({ t: "hello", role: "spectator" }));
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -36,6 +35,9 @@ window.addEventListener("resize", () => {
 });
 
 const [models, sky] = await Promise.all([loadModels(), loadSky().catch(() => null)]);
+// il collegamento parte solo ora: se partisse prima, i primi messaggi del server
+// (elenco postazioni, partita da seguire) arriverebbero mentre nessuno li ascolta
+const link = new Link(() => ({ t: "hello", role: "spectator" }));
 scene.add(buildEnvironment(sky, models));
 
 // giocatore: astronauta sulla piattaforma con il "raggio" dello sguardo

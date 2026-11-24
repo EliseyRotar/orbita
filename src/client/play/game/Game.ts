@@ -151,6 +151,10 @@ export class Game {
     const s = this.scale;
 
     this.sparks = new Sparks(ar ? 0.025 : 0.13);
+    // campo visivo dei visori: HoloLens 2 circa 43°×29°, Quest 2 circa 90°.
+    // Gli oggetti nascono dentro questo cono, così si vedono arrivare.
+    if (ar) this.cone = { az: 0.3, elMin: -0.12, elMax: 0.2 };
+    else if (mode === "vr") this.cone = { az: 0.6, elMin: -0.1, elMax: 0.38 };
     this.root.add(this.sparks.object);
 
     this.boltGeo = new THREE.BoxGeometry(0.09 * s, 0.09 * s, 1.4 * s);
@@ -267,6 +271,7 @@ export class Game {
     const slow = this.hasPower("slow") ? 0.45 : 1;
 
     this.waveT += dt;
+    this.followGaze(dt);
     if (!this.boss && this.waveT >= R.WAVE_SECONDS) this.nextWave();
 
     this.spawnIn -= dt;
@@ -305,6 +310,37 @@ export class Game {
       this.tickT = 0.5;
       this.cb.onTick(this.score, this.lives, R.comboLevel(this.streak), this.wave);
     }
+  }
+
+  /**
+   * Con il visore il "davanti" della partita segue piano lo sguardo (solo in orizzontale):
+   * se il giocatore si gira, i nuovi nemici arrivano comunque dove sta guardando.
+   */
+  private followGaze(dt: number): void {
+    if (this.desktop) return;
+    const want = v1.set(this.headDir.x, 0, this.headDir.z);
+    if (want.lengthSq() < 1e-4) return;
+    want.normalize();
+    this.forward.lerp(want, 1 - Math.exp(-0.7 * dt)).normalize();
+    this.right.crossVectors(this.forward, UP).normalize();
+  }
+
+  /** Posizioni di tutto ciò che può colpire il giocatore, per le frecce ai bordi della vista. */
+  threats(out: { pos: THREE.Vector3; danger: boolean }[]): number {
+    let n = 0;
+    const push = (pos: THREE.Vector3, danger: boolean) => {
+      if (n >= out.length) out.push({ pos: new THREE.Vector3(), danger });
+      out[n]!.pos.copy(pos);
+      out[n]!.danger = danger;
+      n++;
+    };
+    if (this.phase !== "playing") return 0;
+    const near = R.SPAWN_DISTANCE * this.scale * 0.85;
+    for (const r of this.rocks) if (r.obj.position.distanceTo(this.head) < near) push(r.obj.position, false);
+    for (const e of this.enemies) push(e.obj.position, true);
+    for (const m of this.mines) if (m.alive) push(m.mesh.position, true);
+    if (this.boss) push(this.boss.group.position, true);
+    return n;
   }
 
   private nextWave(): void {
@@ -346,8 +382,8 @@ export class Game {
     const s = this.scale;
     const spec = R.ROCK[kind];
     const v = this.cone;
-    const az = (Math.random() * 2 - 1) * (this.desktop ? v.az : 0.95);
-    const el = this.desktop ? v.elMin + Math.random() * (v.elMax - v.elMin) : -0.1 + Math.random() * 0.55;
+    const az = (Math.random() * 2 - 1) * v.az;
+    const el = v.elMin + Math.random() * (v.elMax - v.elMin);
     const pos = at
       ? at.clone()
       : this.dirFrom(az, el, new THREE.Vector3()).multiplyScalar(R.SPAWN_DISTANCE * s).add(this.anchor);
@@ -412,8 +448,8 @@ export class Game {
       obj,
       hp: R.ENEMY.hp,
       t: 0,
-      az: (Math.random() * 2 - 1) * (this.desktop ? this.cone.az * 0.7 : 0.7),
-      el: this.desktop ? this.cone.elMin * 0.3 + Math.random() * this.cone.elMax * 0.6 : 0.05 + Math.random() * 0.35,
+      az: (Math.random() * 2 - 1) * this.cone.az * 0.7,
+      el: this.cone.elMin * 0.3 + Math.random() * this.cone.elMax * 0.6,
       phase: Math.random() * Math.PI * 2,
       fireIn: 2.5 + Math.random(),
       flash: 0,
@@ -680,7 +716,7 @@ export class Game {
     const s = this.scale;
     b.t += dt;
     const dist = Math.max(22, 42 - b.t * 6) * s;
-    const az = Math.sin(b.t * 0.45) * 0.55;
+    const az = Math.sin(b.t * 0.45) * Math.min(0.55, this.cone.az * 0.8);
     const el = 0.22 + Math.sin(b.t * 0.7) * 0.08;
     b.group.position.copy(this.dirFrom(az, el, v1).multiplyScalar(dist).add(this.anchor));
     b.group.lookAt(this.head);

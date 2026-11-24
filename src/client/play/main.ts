@@ -9,6 +9,7 @@ import { Sfx } from "./game/audio.ts";
 import { Game } from "./game/Game.ts";
 import { C } from "./game/palette.ts";
 import { CardPanel, HudPanel } from "./game/panel.ts";
+import { OffscreenArrows } from "./game/arrows.ts";
 import { POWER_LABEL, type Aimer, type Mode, type ViewModel } from "./game/types.ts";
 import { addLights, buildEnvironment } from "./game/world.ts";
 import { setupDiagnostics } from "./diag.ts";
@@ -35,7 +36,10 @@ const store = {
 const ua = navigator.userAgent;
 const isQuest = /OculusBrowser|Quest/i.test(ua);
 const isTouch = matchMedia("(pointer: coarse)").matches && !isQuest;
-const basePlatform: Platform = isTouch ? "mobile" : "desktop";
+/** HoloLens 2: Edge su Windows con supporto AR (si scopre dopo, vedi setupXrButtons). */
+const isWindows = /Windows/i.test(ua);
+let isHoloLens = /HoloLens/i.test(ua);
+let basePlatform: Platform = isHoloLens ? "ar" : isTouch ? "mobile" : "desktop";
 const params = new URLSearchParams(location.search);
 
 let deviceId = store.get("orbita.deviceId");
@@ -46,11 +50,12 @@ if (!deviceId) {
 const guessLabel = () => {
   const suffix = deviceId!.slice(0, 3).toUpperCase();
   if (isQuest) return `Quest ${suffix}`;
-  if (/HoloLens|Windows NT 10.*ARM/i.test(ua)) return `HoloLens ${suffix}`;
+  if (isHoloLens) return `HoloLens ${suffix}`;
   if (isTouch) return `Telefono ${suffix}`;
   return `PC ${suffix}`;
 };
-let label = store.get("orbita.label") ?? guessLabel();
+const savedLabel = store.get("orbita.label");
+let label = savedLabel ?? guessLabel();
 let platform: Platform = basePlatform;
 
 const link = new Link(() => ({ t: "hello", role: "device", deviceId: deviceId!, label, platform }));
@@ -131,6 +136,8 @@ let game: Game | null = null;
 let env: THREE.Group | null = null;
 let hud: HudPanel | null = null;
 let card: CardPanel | null = null;
+let arrows: OffscreenArrows | null = null;
+const threats: { pos: THREE.Vector3; danger: boolean }[] = [];
 let pendingName: string | null = null;
 let watched = false;
 /** Rotazione del modello della pistola per avere la canna lungo -Z. */
@@ -170,7 +177,12 @@ function buildScene(mode: Mode): void {
 
   controllers.length = 0;
   hud = card = null;
+  if (arrows) camera.remove(arrows.group);
+  arrows = null;
   if (mode === "vr" || mode === "ar") {
+    // frecce ai bordi del campo visivo (HoloLens ~43°×29°, Quest ~90°×90°)
+    arrows = ar ? new OffscreenArrows(0.37, 0.25) : new OffscreenArrows(0.75, 0.7);
+    camera.add(arrows.group);
     hud = new HudPanel(ar);
     card = new CardPanel(ar);
     scene.add(hud.mesh, card.mesh);
@@ -400,10 +412,28 @@ async function setupXrButtons(): Promise<void> {
     xr.isSessionSupported("immersive-vr").catch(() => false),
     xr.isSessionSupported("immersive-ar").catch(() => false),
   ]);
-  ui.vr.hidden = !vr;
-  ui.ar.hidden = !ar;
+  // l'HoloLens si presenta come schermo "touch" come un telefono: lo riconosciamo
+  // perché è Windows e supporta l'AR (i telefoni Android supportano l'AR ma non sono Windows)
+  if (ar && isWindows && !isQuest && !isHoloLens) {
+    isHoloLens = true;
+    basePlatform = "ar";
+    if (!renderer.xr.isPresenting) {
+      platform = "ar";
+      link.send({ t: "device:platform", platform });
+    }
+    if (!savedLabel) {
+      label = guessLabel();
+      ui.label.value = label;
+      link.send({ t: "device:label", label });
+      ui.status.textContent = `collegato come ${label}`;
+    }
+  }
+  // sui telefoni si gioca a schermo: niente pulsanti AR/VR del telefono, confondono
+  const phone = isTouch && !isHoloLens;
+  ui.vr.hidden = !vr || phone;
+  ui.ar.hidden = !ar || phone;
   xrSupport = { vr, ar };
-  seeThrough = ar && !isQuest;
+  seeThrough = isHoloLens;
   // sul Quest la VR è l'esperienza principale, sull'HoloLens l'AR
   const primary = vr && (isQuest || !ar) ? ui.vr : ar ? ui.ar : null;
   if (primary) {
@@ -575,6 +605,10 @@ renderer.setAnimationLoop((time) => {
   const playing = vm.phase === "playing" || vm.phase === "countdown";
   sfx.setMusic(playing ? "game" : "lobby", game.bossActive);
 
+  if (arrows) {
+    if (xr && vm.phase === "playing") arrows.update(dt, renderer.xr.getCamera(), threats, game.threats(threats));
+    else arrows.hide();
+  }
   if (hud && card) {
     hud.mesh.visible = vm.phase === "playing";
     card.mesh.visible = vm.phase !== "playing";

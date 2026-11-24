@@ -92,6 +92,8 @@ export interface Snapshot {
   totalsAll: Totals;
   feed: FeedItem[];
   queue: string[];
+  /** Ultima partita giocata e la sua posizione di oggi (anche se fuori dalla top 10). */
+  last: { game: GameRecord; rankToday: number } | null;
   /** Telefoni dei visitatori collegati (non elencati uno per uno). */
   phones: { online: number; playing: number };
   config: PublicConfig;
@@ -164,6 +166,8 @@ export type ServerMsg =
   | { t: "denied"; reason: string }
   | { t: "assign"; name: string | null }
   | { t: "stop" }
+  /** Ai dispositivi: la top 5 di oggi, da mostrare nel menu. */
+  | { t: "top"; list: { player: string; score: number; platform: Platform }[]; games: number }
   /** Al dispositivo: qualcuno lo sta guardando, manda (o smetti di mandare) i fotogrammi. */
   | { t: "watch"; on: boolean }
   | { t: "frame"; data: SpectatorFrame }

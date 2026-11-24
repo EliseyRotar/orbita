@@ -2,13 +2,21 @@ body {
   overflow: hidden;
   touch-action: none;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
 }
 
-#stage,
-#stage canvas {
+#stage {
   position: fixed;
   inset: 0;
+}
+/* la tela riempie sempre lo schermo, qualunque cosa dica il browser sulle dimensioni */
+#stage canvas {
   display: block;
+  width: 100% !important;
+  height: 100% !important;
 }
 
 #hurt {
@@ -202,6 +210,80 @@ body[data-phase="playing"] #stage {
 .actions {
   display: grid;
   gap: 14px;
+}
+.lobby-top {
+  padding-top: 14px;
+  border-top: 2px dashed var(--dim);
+}
+.lt-title {
+  margin: 0 0 8px;
+  font-family: var(--pixel);
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--cyan);
+}
+.lt-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lt-list li {
+  display: grid;
+  grid-template-columns: 1.6em minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 26px;
+  line-height: 1.15;
+}
+.lt-list li:first-child {
+  color: var(--yellow);
+}
+.lt-pos,
+.lt-pts {
+  font-family: var(--pixel);
+  font-size: 14px;
+}
+.lt-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lt-via {
+  font-size: 18px;
+  color: var(--grey);
+}
+.lt-list .lt-empty {
+  display: block;
+  font-size: 22px;
+  color: var(--grey);
+}
+
+.mode-hint {
+  margin: 0;
+  font-size: 24px;
+  color: var(--grey);
+}
+.mode-hint:empty {
+  display: none;
+}
+.more {
+  justify-self: start;
+  padding: 4px 0;
+  font-size: 24px;
+  color: var(--cyan);
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+.more-modes {
+  display: grid;
+  gap: 10px;
+}
+.more-modes .btn {
+  min-height: 48px;
+  font-size: 14px;
 }
 .note {
   margin: 0;

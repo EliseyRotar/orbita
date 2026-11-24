@@ -40,6 +40,10 @@ const pad = (n: number) => String(Math.max(0, Math.floor(n))).padStart(6, "0");
 
 function render(s: Snapshot): void {
   renderLeaderboard(s.leaderboardToday);
+  const last = s.last;
+  $("last").innerHTML = last
+    ? `ULTIMA PARTITA <b>${esc(last.game.player.toUpperCase())}</b> ${pad(last.game.score)} <span>${last.rankToday ? `${last.rankToday}° OGGI` : ""} · ${VIA[last.game.platform]}</span>`
+    : "";
   renderDevices(s.devices, s.now, s.phones);
   renderTotals(s);
   renderFeed(s.feed);

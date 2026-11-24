@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { ENT, type EntityKind, type FrameEntity, type GameFrame, type GameStats } from "../../../shared/protocol.ts";
-import { instance, type Models } from "../../common/assets.ts";
+import { instance, tint, type ModelName, type Models } from "../../common/assets.ts";
+import type { Theme } from "./themes.ts";
 import type { Sfx } from "./audio.ts";
 import { Sparks } from "./fx.ts";
 import { C } from "./palette.ts";
@@ -74,12 +75,37 @@ const ENEMY_LIFETIME = 16;
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
-const ROCK_MODEL: Record<R.RockKind, "meteor" | "meteorB" | "crystal"> = {
-  small: "meteorB",
-  medium: "meteor",
-  large: "meteor",
-  gold: "crystal",
+/** Modelli possibili per ogni tipo di asteroide ("proc" = forma generata al momento). */
+const ROCK_MODELS: Record<R.RockKind, (ModelName | "proc")[]> = {
+  small: ["meteorB", "rocksSmallA", "rocksSmallB", "meteorHalf", "proc", "proc"],
+  medium: ["meteor", "rock", "meteorHalf", "proc", "proc"],
+  large: ["rockLargeA", "rockLargeB", "meteor", "proc"],
+  gold: ["crystal", "crystalA", "crystalB"],
 };
+
+/** Forme di roccia generate al volo: icosaedri deformati, ognuno diverso. */
+function makeRockGeometry(seed: number): THREE.BufferGeometry {
+  const g = new THREE.IcosahedronGeometry(1, 1);
+  const p = g.attributes.position as THREE.BufferAttribute;
+  const stretch = new THREE.Vector3(1 + (seed % 3) * 0.18, 1 - (seed % 2) * 0.22, 1 + ((seed * 7) % 4) * 0.08);
+  const offsets = new Map<string, number>();
+  for (let i = 0; i < p.count; i++) {
+    const key = `${p.getX(i).toFixed(3)},${p.getY(i).toFixed(3)},${p.getZ(i).toFixed(3)}`;
+    let k = offsets.get(key);
+    if (k === undefined) {
+      k = 0.72 + 0.5 * Math.abs((Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453) % 1);
+      offsets.set(key, k);
+    }
+    p.setXYZ(i, p.getX(i) * k * stretch.x, p.getY(i) * k * stretch.y, p.getZ(i) * k * stretch.z);
+  }
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  const r = 1 / g.boundingSphere!.radius;
+  g.scale(r, r, r);
+  return g;
+}
+const PROC_GEOS = Array.from({ length: 8 }, (_, i) => makeRockGeometry(i + 1));
+const PROC_MAT = new THREE.MeshStandardMaterial({ color: 0xc98a6a, roughness: 0.9, metalness: 0.05, flatShading: true });
 const ENEMY_MODELS = ["enemyA", "enemyB", "enemyC"] as const;
 
 /**
@@ -137,6 +163,10 @@ export class Game {
   private ringGeo = new THREE.RingGeometry(0.85, 1, 40);
   private flashGeo = new THREE.SphereGeometry(1, 10, 8);
   private dust: THREE.Points | null = null;
+  /** Colore degli asteroidi del livello attuale. */
+  private rockTint = 0xffffff;
+  /** Effetto "iperspazio" durante il cambio di livello (0..1), dato dallo sfondo. */
+  warp = 0;
   private powers: ActivePower[] = [];
   private toast: string | null = null;
   private toastT = 0;
@@ -202,6 +232,29 @@ export class Game {
     }
   }
 
+  /** Nuovo livello: colore degli asteroidi e della polvere spaziale. */
+  setTheme(theme: Theme): void {
+    this.rockTint = theme.rock;
+    if (this.dust) (this.dust.material as THREE.PointsMaterial).color.setHex(theme.dust);
+  }
+
+  /** Un asteroide con forma, rotazione, proporzioni e colore sempre un po' diversi. */
+  private makeRock(kind: R.RockKind): THREE.Object3D {
+    const list = ROCK_MODELS[kind];
+    const pick = list[Math.floor(Math.random() * list.length)]!;
+    let obj: THREE.Object3D;
+    if (pick === "proc") {
+      obj = new THREE.Group();
+      obj.add(new THREE.Mesh(PROC_GEOS[Math.floor(Math.random() * PROC_GEOS.length)], PROC_MAT));
+    } else {
+      obj = instance(this.models, pick);
+    }
+    // proporzioni leggermente diverse su ogni asse
+    obj.children[0]?.scale.multiply(new THREE.Vector3(0.8 + Math.random() * 0.4, 0.8 + Math.random() * 0.4, 0.8 + Math.random() * 0.4));
+    if (kind !== "gold") tint(obj, this.rockTint);
+    return obj;
+  }
+
   /** Torna al menu iniziale (dalla schermata di fine partita). */
   toLobby(): void {
     if (this.phase !== "over") return;
@@ -263,7 +316,7 @@ export class Game {
     }
     if (this.dust) {
       // la polvere vive nel riferimento del giocatore e scorre verso di lui
-      const speed = this.phase === "playing" ? (8 + this.wave) * (this.bossActive ? 1.6 : 1) : 3;
+      const speed = (this.phase === "playing" ? (8 + this.wave) * (this.bossActive ? 1.6 : 1) : 3) * (1 + this.warp * 9);
       const pos = this.dust.geometry.attributes.position as THREE.BufferAttribute;
       for (let i = 0; i < pos.count; i++) {
         let z = pos.getZ(i) + speed * dt;
@@ -492,7 +545,7 @@ export class Game {
       ? at.clone()
       : this.dirFrom(az, el, new THREE.Vector3()).multiplyScalar(R.SPAWN_DISTANCE * s).add(this.anchor);
     const radius = (size ?? spec.radius) * s;
-    const obj = instance(this.models, ROCK_MODEL[kind]);
+    const obj = this.makeRock(kind);
     obj.position.copy(pos);
     obj.scale.setScalar(radius);
     obj.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
@@ -937,6 +990,7 @@ export class Game {
     this.enemies = [];
     for (const m of this.mines) if (m.alive) this.killMine(m);
     this.sfx.over();
+    this.sfx.jingle("over");
     this.cb.onEnd(stats);
   }
 

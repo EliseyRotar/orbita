@@ -11,7 +11,8 @@ import { C } from "./game/palette.ts";
 import { CardPanel, HudPanel, type CardAction } from "./game/panel.ts";
 import { OffscreenArrows } from "./game/arrows.ts";
 import { POWER_LABEL, type Aimer, type Mode, type ViewModel } from "./game/types.ts";
-import { addLights, buildEnvironment } from "./game/world.ts";
+import { addLights, buildEnvironment, type Environment } from "./game/world.ts";
+import { THEMES, themeFor, type Theme } from "./game/themes.ts";
 import { setupDiagnostics } from "./diag.ts";
 
 // ---------------- identità della postazione ----------------
@@ -119,8 +120,9 @@ const glAttrs: WebGLContextAttributes & { xrCompatible: boolean } = {
 };
 const context = (canvas.getContext("webgl2", glAttrs) ?? undefined) as WebGL2RenderingContext | undefined;
 const renderer = new THREE.WebGLRenderer({ canvas, context, antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
+// sui telefoni una risoluzione un po' più bassa: più fluido e meno batteria
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, isTouch ? 1.5 : 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.xr.enabled = true;
 stage.appendChild(renderer.domElement);
@@ -133,7 +135,8 @@ let models!: Models;
 let sky: THREE.Texture | null = null;
 let scene = new THREE.Scene();
 let game: Game | null = null;
-let env: THREE.Group | null = null;
+let env: Environment | null = null;
+let currentTheme: Theme | null = null;
 let hud: HudPanel | null = null;
 let card: CardPanel | null = null;
 let arrows: OffscreenArrows | null = null;
@@ -178,7 +181,8 @@ function buildScene(mode: Mode): void {
   if (!ar) {
     scene.background = new THREE.Color(C.black);
     env = buildEnvironment(sky, models);
-    scene.add(env);
+    scene.add(env.group);
+    if (currentTheme) env.backdrop.setTheme(currentTheme, true);
   } else {
     scene.background = null;
     env = null;
@@ -202,6 +206,7 @@ function buildScene(mode: Mode): void {
   game.online = link.online;
   game.setNextPlayer(pendingName);
   game.defaultName = label;
+  if (currentTheme) game.setTheme(currentTheme);
   if (mode === "desktop" || mode === "mobile") queueMicrotask(fitView);
   scene.add(game.root);
 
@@ -282,7 +287,19 @@ link.on((msg) => {
       break;
     case "rank":
       game?.setRank(msg.rankToday, msg.rankAll, msg.isRecord);
+      if (msg.isRecord) sfx.jingle("record");
       break;
+    case "top": {
+      const via = { desktop: "PC", vr: "QUEST", ar: "HOLO", mobile: "TEL" } as const;
+      const list = document.querySelector("#lobby-top")!;
+      const esc = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+      list.innerHTML = msg.list.length
+        ? msg.list
+            .map((g, i) => `<li><span class="lt-pos">${i + 1}</span><span class="lt-name">${esc(g.player.toUpperCase())}</span><span class="lt-via">${via[g.platform]}</span><span class="lt-pts">${String(g.score).padStart(6, "0")}</span></li>`)
+            .join("")
+        : `<li class="lt-empty">ancora nessuno: il primo posto è tuo</li>`;
+      break;
+    }
     case "watch":
       watched = msg.on;
       break;
@@ -324,7 +341,19 @@ function startDesktop(): void {
   game.press(camera.getWorldPosition(new THREE.Vector3()), dir);
 }
 
-ui.play.addEventListener("click", startDesktop);
+/** Modalità scelta in automatico dal dispositivo: il pulsante GIOCA fa la cosa giusta. */
+let autoMode: "screen" | "vr" | "ar" = "screen";
+ui.play.addEventListener("click", () => {
+  if (autoMode === "screen") startDesktop();
+  else void enterXr(autoMode);
+});
+document.querySelector("#btn-screen")!.addEventListener("click", startDesktop);
+const moreBtn = document.querySelector<HTMLButtonElement>("#btn-more")!;
+const moreModes = document.querySelector<HTMLElement>("#more-modes")!;
+moreBtn.addEventListener("click", () => {
+  moreModes.hidden = !moreModes.hidden;
+  moreBtn.setAttribute("aria-expanded", String(!moreModes.hidden));
+});
 ui.again.addEventListener("click", startDesktop);
 document.querySelector("#btn-menu")!.addEventListener("click", () => {
   game?.toLobby();
@@ -426,16 +455,24 @@ window.addEventListener("keyup", (e) => {
  * e si stringe il cono dove nascono asteroidi e navicelle, così restano sempre visibili.
  */
 function fitView(): void {
-  const aspect = window.innerWidth / window.innerHeight;
+  if (renderer.xr.isPresenting) return;
+  // la dimensione vera dello schermo la dà il contenitore (CSS 100% x 100%):
+  // su iPhone innerWidth/innerHeight a volte sono sbagliati all'avvio o con la barra degli indirizzi
+  const w = Math.max(1, stage.clientWidth || window.innerWidth);
+  const h = Math.max(1, stage.clientHeight || window.innerHeight);
+  const aspect = w / h;
   camera.aspect = aspect;
   camera.fov = aspect < 1 ? 82 : 70;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(w, h, false);
   const vHalf = THREE.MathUtils.degToRad(camera.fov) / 2;
   const hHalf = Math.atan(Math.tan(vHalf) * aspect);
   game?.setViewCone(Math.min(0.62, hHalf * 0.78), -Math.min(0.12, vHalf * 0.35), Math.min(0.3, vHalf * 0.55));
 }
 window.addEventListener("resize", fitView);
+window.addEventListener("orientationchange", () => setTimeout(fitView, 300));
+window.visualViewport?.addEventListener("resize", fitView);
+new ResizeObserver(fitView).observe(stage);
 
 // ---------------- WebXR ----------------
 
@@ -479,12 +516,25 @@ async function setupXrButtons(): Promise<void> {
   const vrHeadset = vr && !isHoloLens && !phone;
   if (vrHeadset) ui.ar.textContent = "REALTÀ MISTA";
   // sul Quest la VR è l'esperienza principale, sull'HoloLens l'AR
-  const primary = vrHeadset ? ui.vr : ar ? ui.ar : vr ? ui.vr : null;
-  if (primary) {
-    primary.classList.add("primary");
-    ui.play.classList.remove("primary");
-    primary.parentElement!.prepend(primary);
+  // un solo pulsante GIOCA che sceglie da solo: HoloLens -> AR, Quest -> VR, il resto a schermo
+  const hint = document.querySelector<HTMLElement>("#mode-hint")!;
+  if (isHoloLens && ar) {
+    autoMode = "ar";
+    ui.play.textContent = "GIOCA IN AR";
+    hint.textContent = "HoloLens: gli asteroidi arrivano nella stanza";
+    ui.ar.hidden = true;
+  } else if (vrHeadset) {
+    autoMode = "vr";
+    ui.play.textContent = "GIOCA IN VR";
+    hint.textContent = "visore VR: ti ritrovi nello spazio";
+    ui.vr.hidden = true;
+  } else {
+    autoMode = "screen";
+    ui.play.textContent = "GIOCA";
+    hint.textContent = isTouch ? "tocca lo schermo per sparare, tieni premuto per la raffica" : "";
   }
+  // le altre modalità restano a portata di mano, ma nascoste
+  moreBtn.hidden = autoMode === "screen";
 }
 
 let xrBusy = false;
@@ -672,7 +722,18 @@ renderer.setAnimationLoop((time) => {
   game.update(dt, headPos, headDir, aimers);
   const vm = game.view();
   const playing = vm.phase === "playing" || vm.phase === "countdown";
-  sfx.setMusic(playing ? "game" : "lobby", game.bossActive);
+  // tema del livello: cielo, pianeta, colori degli asteroidi e musica
+  const theme = playing ? themeFor(vm.wave) : THEMES[0]!;
+  if (theme !== currentTheme) {
+    const first = currentTheme === null;
+    currentTheme = theme;
+    env?.backdrop.setTheme(theme, first);
+    game.setTheme(theme);
+    if (!first && playing && theme.music !== "boss") sfx.jingle("wave");
+  }
+  env?.backdrop.update(dt);
+  game.warp = env?.backdrop.warp ?? 0;
+  sfx.setMusic(playing ? theme.music : "lobby");
 
   if (arrows) {
     if (xr && vm.phase === "playing") arrows.update(dt, renderer.xr.getCamera(), threats, game.threats(threats));

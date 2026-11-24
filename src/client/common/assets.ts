@@ -10,6 +10,13 @@ export const MODEL_FILES = {
   meteorB: "meteor.glb",
   meteorHalf: "meteor_half.glb",
   crystal: "rock_crystals.glb",
+  crystalA: "rock_crystalsLargeA.glb",
+  crystalB: "rock_crystalsLargeB.glb",
+  rock: "rock.glb",
+  rockLargeA: "rock_largeA.glb",
+  rockLargeB: "rock_largeB.glb",
+  rocksSmallA: "rocks_smallA.glb",
+  rocksSmallB: "rocks_smallB.glb",
   enemyA: "craft_speederA.glb",
   enemyB: "craft_speederB.glb",
   enemyC: "craft_speederD.glb",
@@ -91,4 +98,27 @@ export async function loadSky(): Promise<THREE.Texture> {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.mapping = THREE.EquirectangularReflectionMapping;
   return tex;
+}
+
+const tintCache = new Map<string, THREE.Material>();
+
+/**
+ * Tinge un oggetto moltiplicando il colore dei suoi materiali. I materiali tinti
+ * sono condivisi (uno per colore), così centinaia di asteroidi non pesano sulla GPU.
+ */
+export function tint(obj: THREE.Object3D, color: number): void {
+  if (color === 0xffffff) return;
+  obj.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const base = m.material as THREE.MeshStandardMaterial;
+    const key = `${base.uuid}:${color}`;
+    let t = tintCache.get(key) as THREE.MeshStandardMaterial | undefined;
+    if (!t) {
+      t = base.clone();
+      t.color.multiply(new THREE.Color(color));
+      tintCache.set(key, t);
+    }
+    m.material = t;
+  });
 }

@@ -9,6 +9,7 @@ import { Link } from "../common/net.ts";
 import { C } from "../play/game/palette.ts";
 import { ROCK, ENEMY } from "../play/game/rules.ts";
 import { addLights, buildEnvironment } from "../play/game/world.ts";
+import { THEMES, themeFor } from "../play/game/themes.ts";
 
 /**
  * Monitor spettatore: ricostruisce in 3D la partita di un visore a partire dai
@@ -38,7 +39,8 @@ const [models, sky] = await Promise.all([loadModels(), loadSky().catch(() => nul
 // il collegamento parte solo ora: se partisse prima, i primi messaggi del server
 // (elenco postazioni, partita da seguire) arriverebbero mentre nessuno li ascolta
 const link = new Link(() => ({ t: "hello", role: "spectator" }));
-scene.add(buildEnvironment(sky, models));
+const env = buildEnvironment(sky, models);
+scene.add(env.group);
 
 // giocatore: astronauta sulla piattaforma con il "raggio" dello sguardo
 const pilot = instance(models, "astronaut");
@@ -275,6 +277,10 @@ renderer.setAnimationLoop((time) => {
   // se i fotogrammi si fermano (hotspot) le entità restano ferme invece di sparire di colpo
   const stale = performance.now() - lastFrameAt > 4000;
   if (stale && shown.size) clearAll();
+
+  // stesso tema di livello del giocatore seguito
+  env.backdrop.setTheme(latest ? themeFor(latest.wave) : THEMES[0]!);
+  env.backdrop.update(dt);
 
   // telecamera: alle spalle del pilota, con un lento ondeggiare
   const live = !!latest;

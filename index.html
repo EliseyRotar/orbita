@@ -29,10 +29,19 @@
         </label>
         <div class="actions">
           <button id="btn-play" type="button" class="btn primary">GIOCA</button>
-          <button id="btn-vr" type="button" class="btn" hidden>ENTRA IN VR</button>
-          <button id="btn-ar" type="button" class="btn" hidden>ENTRA IN AR</button>
+          <p id="mode-hint" class="mode-hint"></p>
+          <button id="btn-more" type="button" class="more" aria-expanded="false" hidden>altre modalità</button>
+          <div id="more-modes" class="more-modes" hidden>
+            <button id="btn-screen" type="button" class="btn">GIOCA A SCHERMO</button>
+            <button id="btn-vr" type="button" class="btn" hidden>VR</button>
+            <button id="btn-ar" type="button" class="btn" hidden>REALTÀ MISTA</button>
+          </div>
         </div>
         <p id="xr-note" class="note" hidden></p>
+        <section class="lobby-top" aria-labelledby="lt-title">
+          <h2 id="lt-title" class="lt-title">HIGH SCORES OGGI</h2>
+          <ol id="lobby-top" class="lt-list"><li class="lt-empty">ancora nessuno: il primo posto è tuo</li></ol>
+        </section>
       </form>
 
       <dl class="howto">

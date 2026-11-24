@@ -131,7 +131,10 @@ export class Hub {
         }
       }
       conn.role = msg.role;
-      if (msg.role === "device") this.registerDevice(conn, msg.deviceId, msg.label, msg.platform);
+      if (msg.role === "device") {
+        this.registerDevice(conn, msg.deviceId, msg.label, msg.platform);
+        this.sendTop(conn.ws);
+      }
       this.send(conn.ws, { t: "welcome", role: msg.role });
       if (msg.role !== "device") this.send(conn.ws, { t: "snapshot", data: this.snapshot() });
       if (msg.role === "spectator") this.updateWatch();
@@ -196,7 +199,7 @@ export class Hub {
         dev.nextPlayer = null;
         dev.status = "playing";
         dev.live = { player, score: 0, lives: 3, combo: 1, wave: 1, startedAt: Date.now() };
-        this.pushFeed("start", `${player} è in volo su ${dev.label}`);
+        this.pushFeed("start", player === dev.label ? `${player} è in volo` : `${player} è in volo su ${dev.label}`);
         break;
       }
       case "game:tick":
@@ -332,6 +335,7 @@ export class Hub {
       phones: this.phoneCount(),
       leaderboardToday: this.store.leaderboard(today, 15),
       leaderboardAll: this.store.leaderboard(null, 15),
+      last: this.lastGame(today),
       recent: this.store.recent(25),
       totalsToday: this.store.totals(today),
       totalsAll: this.store.totals(null),
@@ -339,6 +343,28 @@ export class Hub {
       queue: this.queue,
       config: this.config(),
     };
+  }
+
+  private lastGame(today: string): Snapshot["last"] {
+    const game = this.store.recent(1)[0];
+    if (!game) return null;
+    return { game, rankToday: game.day === today ? this.store.rankOf(game, today) : 0 };
+  }
+
+  private lastTop = "";
+
+  /** La top 5 di oggi ai dispositivi (solo quando cambia: costa pochissimo). */
+  private sendTop(force?: Sock): void {
+    const today = fairDay();
+    const list = this.store.leaderboard(today, 5).map((g) => ({ player: g.player, score: g.score, platform: g.platform }));
+    const data = JSON.stringify({ t: "top", list, games: this.store.totals(today).games } satisfies ServerMsg);
+    if (force) {
+      this.sendRaw(force, data);
+      return;
+    }
+    if (data === this.lastTop) return;
+    this.lastTop = data;
+    for (const c of this.conns) if (c.role === "device") this.sendRaw(c.ws, data);
   }
 
   private phoneCount(): { online: number; playing: number } {
@@ -359,6 +385,7 @@ export class Hub {
       this.broadcastTimer = null;
       const data = JSON.stringify({ t: "snapshot", data: this.snapshot() } satisfies ServerMsg);
       for (const c of this.conns) if (c.role === "tv" || c.role === "admin" || c.role === "spectator") this.sendRaw(c.ws, data);
+      this.sendTop();
       this.updateWatch();
     }, 160);
   }

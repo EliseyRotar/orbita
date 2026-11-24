@@ -4,6 +4,8 @@
  * la musica è in streaming (HTMLAudioElement) per non occupare RAM sull'HoloLens.
  */
 
+import type { MusicTrack } from "./themes.ts";
+
 const SFX = {
   shoot: ["laserSmall_000", "laserSmall_001", "laserSmall_002"],
   enemyShoot: ["laserRetro_002"],
@@ -16,6 +18,9 @@ const SFX = {
   damage: ["error_006"],
   start: ["select_005"],
   alarm: ["glitch_003"],
+  jingleWave: ["jingle_wave"],
+  jingleOver: ["jingle_over"],
+  jingleRecord: ["jingle_record"],
 } as const;
 
 type SfxName = keyof typeof SFX;
@@ -25,7 +30,7 @@ export class Sfx {
   private master: GainNode | null = null;
   private buffers = new Map<string, AudioBuffer>();
   private music: HTMLAudioElement | null = null;
-  private musicTrack: "lobby" | "game" | null = null;
+  private musicTrack: MusicTrack | null = null;
   private loading: Promise<void> | null = null;
   muted = false;
 
@@ -50,7 +55,8 @@ export class Sfx {
     await Promise.all(
       [...names].map(async (n) => {
         try {
-          const res = await fetch(`/media/sfx/${n}.ogg`);
+          // MP3: l'unico formato che suona ovunque, iPhone compresi
+          const res = await fetch(`/media/sfx/${n}.mp3`);
           this.buffers.set(n, await ctx.decodeAudioData(await res.arrayBuffer()));
         } catch {
           /* un suono mancante non deve bloccare il gioco */
@@ -111,21 +117,44 @@ export class Sfx {
     this.play("damage", 0.8, 0.7);
   }
 
-  /** Musica: "lobby" in attesa, "game" durante la partita (più veloce durante il boss). */
-  setMusic(track: "lobby" | "game" | null, intense = false): void {
-    if (track !== this.musicTrack) {
-      this.musicTrack = track;
-      this.music?.pause();
-      this.music = null;
-      if (track) {
-        const a = new Audio(track === "game" ? "/media/music/game.mp3" : "/media/music/lobby.ogg");
-        a.loop = true;
-        a.volume = track === "game" ? 0.32 : 0.4;
-        this.music = a;
-        if (this.ctx && !this.muted) void a.play().catch(() => {});
+  /**
+   * Musica: un brano per livello (vedi themes.ts), "lobby" in attesa.
+   * Il cambio è in dissolvenza: il brano vecchio si abbassa mentre sale il nuovo.
+   */
+  setMusic(track: MusicTrack | null): void {
+    if (track === this.musicTrack) return;
+    this.musicTrack = track;
+    const old = this.music;
+    if (old) this.fade(old, 0, 900, () => old.pause());
+    this.music = null;
+    if (!track) return;
+    const a = new Audio(`/media/music/${track}.mp3`);
+    a.loop = true;
+    a.volume = 0;
+    this.music = a;
+    if (this.ctx && !this.muted) void a.play().catch(() => {});
+    this.fade(a, track === "lobby" ? 0.4 : 0.34, 1200);
+  }
+
+  private fade(a: HTMLAudioElement, to: number, ms: number, done?: () => void): void {
+    const from = a.volume;
+    const t0 = performance.now();
+    const step = () => {
+      const k = Math.min(1, (performance.now() - t0) / ms);
+      try {
+        a.volume = from + (to - from) * k;
+      } catch {
+        /* iOS non permette di cambiare il volume: pazienza */
       }
-    }
-    if (this.music) this.music.playbackRate = intense ? 1.08 : 1;
+      if (k < 1) requestAnimationFrame(step);
+      else done?.();
+    };
+    requestAnimationFrame(step);
+  }
+
+  /** Jingle 8-bit (Kenney "Music Jingles", CC0). */
+  jingle(name: "wave" | "over" | "record"): void {
+    this.play(name === "wave" ? "jingleWave" : name === "over" ? "jingleOver" : "jingleRecord", 0.7);
   }
 
   toggleMute(): void {

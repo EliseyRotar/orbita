@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as R from "../src/client/play/game/rules.ts";
+import { DIFFICULTY_PRESETS } from "../src/shared/protocol.ts";
 
 describe("regole di gioco", () => {
   it("la combo sale ogni 4 distruzioni e si ferma a x5", () => {
@@ -18,19 +19,28 @@ describe("regole di gioco", () => {
 
   it("la difficoltà cresce ma resta giocabile", () => {
     expect(R.spawnInterval(1)).toBeGreaterThan(R.spawnInterval(5));
-    expect(R.spawnInterval(50)).toBeGreaterThanOrEqual(0.42);
+    expect(R.spawnInterval(50)).toBeGreaterThanOrEqual(0.3);
     expect(R.rockSpeed(5)).toBeGreaterThan(R.rockSpeed(1));
   });
 
-  it("il boss arriva ogni 4 ondate", () => {
-    expect([1, 2, 3, 4, 5, 8].map(R.isBossWave)).toEqual([false, false, false, true, false, true]);
+  it("il boss arriva ogni 3 ondate", () => {
+    expect([1, 2, 3, 4, 5, 6].map(R.isBossWave)).toEqual([false, false, true, false, false, true]);
   });
 
-  it("i nemici arrivano dalla seconda ondata, al massimo 4", () => {
+  it("i nemici arrivano dalla seconda ondata, al massimo 6", () => {
     expect(R.maxEnemies(1)).toBe(0);
     expect(R.maxEnemies(2)).toBe(2);
-    expect(R.maxEnemies(20)).toBe(4);
-    expect(R.enemyFireInterval(50)).toBeGreaterThanOrEqual(1.5);
+    expect(R.maxEnemies(40)).toBe(6);
+    expect(R.enemyFireInterval(50)).toBeGreaterThanOrEqual(0.8);
+  });
+
+  it("la difficoltà dell'operatore cambia davvero il gioco", () => {
+    const facile = DIFFICULTY_PRESETS.facile;
+    const inferno = DIFFICULTY_PRESETS.inferno;
+    expect(R.rockSpeed(3, inferno)).toBeGreaterThan(R.rockSpeed(3, facile));
+    expect(R.spawnInterval(3, inferno)).toBeLessThan(R.spawnInterval(3, facile));
+    expect(R.bossHp(0, inferno)).toBeGreaterThan(R.bossHp(0, facile));
+    expect(R.maxEnemies(1, inferno)).toBeGreaterThan(0);
   });
 
   it("all'inizio escono quasi solo asteroidi piccoli", () => {

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { GameRecord } from "../shared/protocol.ts";
+import type { GameRecord, Settings } from "../shared/protocol.ts";
 import { Records } from "./records.ts";
 
 export { fairDay } from "./records.ts";
@@ -8,6 +8,7 @@ export { fairDay } from "./records.ts";
 interface DbShape {
   version: 1;
   games: GameRecord[];
+  settings?: Partial<Settings>;
 }
 
 /**
@@ -24,12 +25,17 @@ export class Store extends Records {
       try {
         const db = JSON.parse(readFileSync(file, "utf8")) as DbShape;
         this.games = Array.isArray(db.games) ? db.games : [];
+        this.storedSettings = db.settings ?? {};
       } catch (err) {
         const backup = `${file}.broken-${Date.now()}`;
         renameSync(file, backup);
         console.warn(`[store] file dati illeggibile, spostato in ${backup}`, err);
       }
     }
+  }
+
+  protected override settingsSaved(): void {
+    this.saved();
   }
 
   protected override saved(): void {
@@ -43,7 +49,7 @@ export class Store extends Records {
   flush(): void {
     mkdirSync(dirname(this.file), { recursive: true });
     const tmp = `${this.file}.tmp`;
-    const db: DbShape = { version: 1, games: this.games };
+    const db: DbShape = { version: 1, games: this.games, settings: this.storedSettings };
     writeFileSync(tmp, JSON.stringify(db, null, 1));
     renameSync(tmp, this.file);
   }

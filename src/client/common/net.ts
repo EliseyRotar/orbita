@@ -12,6 +12,9 @@ export class Link {
   private listeners = new Set<Listener>();
   private statusListeners = new Set<StatusListener>();
   private retry = 0;
+  /** Messaggi importanti (fine partita) da rimandare se la rete era giù. */
+  private pending: ClientMsg[] = [];
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   online = false;
 
   constructor(private hello: () => HelloMsg) {
@@ -25,6 +28,8 @@ export class Link {
     ws.onopen = () => {
       this.retry = 0;
       ws.send(JSON.stringify(this.hello()));
+      // dopo il saluto, ciò che non era partito mentre eravamo offline
+      for (const m of this.pending.splice(0)) ws.send(JSON.stringify(m));
       this.setOnline(true);
     };
     ws.onmessage = (ev) => {
@@ -37,9 +42,13 @@ export class Link {
       for (const l of this.listeners) l(msg);
     };
     ws.onclose = () => {
+      if (this.ws !== ws) return;
       this.setOnline(false);
       const wait = Math.min(5000, 500 * 2 ** this.retry++);
-      setTimeout(() => this.connect(), wait);
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null;
+        this.connect();
+      }, wait);
     };
   }
 
@@ -51,6 +60,21 @@ export class Link {
 
   send(msg: ClientMsg): void {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+  }
+
+  /** Come send, ma se la rete è giù il messaggio aspetta e parte appena torna. */
+  sendReliable(msg: ClientMsg): void {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+    else if (this.pending.length < 20) this.pending.push(msg);
+  }
+
+  /** Forza una nuova connessione (es. tornando in primo piano dopo un blocco schermo). */
+  reconnectSoon(): void {
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.retry = 0;
+    this.connect();
   }
 
   /** Ripete il saluto (es. dopo aver cambiato nome o PIN). */

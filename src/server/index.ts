@@ -108,6 +108,7 @@ const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 wss.on("connection", (ws) => {
   const conn = hub.connect({
     send: (data) => ws.send(data),
+    close: () => ws.close(1008, "troppi messaggi"),
     get open() {
       return ws.readyState === ws.OPEN;
     },

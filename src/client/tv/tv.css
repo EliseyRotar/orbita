@@ -463,3 +463,57 @@ body.tv {
     mask-image: none;
   }
 }
+
+/* ---------- classifica: tutti i giocatori, a pagine ---------- */
+.hs-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+}
+.hs-page {
+  font-size: 16px;
+  color: var(--grey);
+}
+.row {
+  position: relative;
+}
+/* barra sottile proporzionale ai punti del primo */
+.row::after {
+  content: "";
+  position: absolute;
+  left: 150px;
+  bottom: 8px;
+  width: calc((100% - 150px - 140px) * var(--bar, 0));
+  height: 3px;
+  background: currentColor;
+  opacity: 0.25;
+}
+.row.empty::after {
+  display: none;
+}
+.row .via {
+  justify-self: end;
+}
+.v-vr { color: var(--pink); }
+.v-ar { color: var(--cyan); }
+.v-desktop { color: var(--yellow); }
+.v-mobile { color: var(--green); }
+.leaderboard.flip .row {
+  animation: row-in 0.35s steps(4) both;
+}
+.leaderboard.flip .row:nth-child(2) { animation-delay: 0.03s; }
+.leaderboard.flip .row:nth-child(3) { animation-delay: 0.06s; }
+.leaderboard.flip .row:nth-child(4) { animation-delay: 0.09s; }
+.leaderboard.flip .row:nth-child(5) { animation-delay: 0.12s; }
+.leaderboard.flip .row:nth-child(6) { animation-delay: 0.15s; }
+.leaderboard.flip .row:nth-child(7) { animation-delay: 0.18s; }
+.leaderboard.flip .row:nth-child(8) { animation-delay: 0.21s; }
+.leaderboard.flip .row:nth-child(9) { animation-delay: 0.24s; }
+.leaderboard.flip .row:nth-child(10) { animation-delay: 0.27s; }
+@keyframes row-in {
+  from { opacity: 0; transform: translateX(-24px); }
+}
+.dev.idle span {
+  grid-column: 1 / -1;
+}

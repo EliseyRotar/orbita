@@ -37,8 +37,14 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
-/** Rumore "a nuvola" calcolato una volta in una texture equirettangolare (senza cuciture). */
+let nebulaCache: THREE.DataTexture | null = null;
+/** La nebulosa si calcola una sola volta: ricalcolarla a ogni ingresso in VR bloccava il Quest. */
 function nebulaTexture(): THREE.DataTexture {
+  return (nebulaCache ??= makeNebulaTexture());
+}
+
+/** Rumore "a nuvola" calcolato una volta in una texture equirettangolare (senza cuciture). */
+function makeNebulaTexture(): THREE.DataTexture {
   const W = 512;
   const H = 256;
   const data = new Uint8Array(W * H * 4);

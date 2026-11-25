@@ -2,13 +2,15 @@ import "../common/tokens.css";
 import "./play.css";
 
 import * as THREE from "three";
-import { accuracy, cleanName, type Platform } from "../../shared/protocol.ts";
+import { accuracy, cleanName, DEFAULT_SETTINGS, type OtherPilot, type Platform, type Settings, type VisualStyle } from "../../shared/protocol.ts";
+import { BOSS_EVERY } from "./game/rules.ts";
 import { instance, loadModels, loadSky, type Models } from "../common/assets.ts";
 import { Link } from "../common/net.ts";
 import { Sfx } from "./game/audio.ts";
 import { Game } from "./game/Game.ts";
 import { C } from "./game/palette.ts";
-import { CardPanel, HudPanel, type CardAction } from "./game/panel.ts";
+import { CardPanel, HudPanel, OthersPanel, type CardAction } from "./game/panel.ts";
+import { Wingmen } from "./game/wingmen.ts";
 import { OffscreenArrows } from "./game/arrows.ts";
 import { POWER_LABEL, type Aimer, type Mode, type ViewModel } from "./game/types.ts";
 import { addLights, buildEnvironment, type Environment } from "./game/world.ts";
@@ -59,7 +61,12 @@ const savedLabel = store.get("orbita.label");
 let label = savedLabel ?? guessLabel();
 let platform: Platform = basePlatform;
 
-const link = new Link(() => ({ t: "hello", role: "device", deviceId: deviceId!, label, platform }));
+// il saluto include la partita in corso: se la rete cade e torna, il server non la perde
+const link = new Link(() => ({ t: "hello", role: "device", deviceId: deviceId!, label, platform, game: game?.current() ?? null }));
+let settings: Settings = DEFAULT_SETTINGS;
+let others: OtherPilot[] = [];
+const STYLES: VisualStyle[] = ["neon", "realistico", "ologramma"];
+const VIA = { desktop: "PC", vr: "QUEST", ar: "HOLOLENS", mobile: "TELEFONO" } as const;
 
 // ---------------- riferimenti DOM ----------------
 
@@ -95,6 +102,8 @@ const ui = {
   bossBar: $("#hud-boss-bar"),
   hurt: $("#hurt"),
   crosshair: $("#crosshair"),
+  pauseBtn: $<HTMLButtonElement>("#btn-pause"),
+  pause: $("#pause"),
   res: {
     who: $("#res-who"),
     score: $("#res-score"),
@@ -139,6 +148,8 @@ let env: Environment | null = null;
 let currentTheme: Theme | null = null;
 let hud: HudPanel | null = null;
 let card: CardPanel | null = null;
+let othersPanel: OthersPanel | null = null;
+let wingmen: Wingmen | null = null;
 let arrows: OffscreenArrows | null = null;
 const threats: { pos: THREE.Vector3; danger: boolean }[] = [];
 let pendingName: string | null = null;
@@ -151,9 +162,58 @@ interface Controller {
   held: boolean;
   pressed: boolean;
   ray: THREE.Object3D;
+  tip: THREE.Object3D;
+  gun: THREE.Object3D;
   source: XRInputSource | null;
 }
 const controllers: Controller[] = [];
+
+/**
+ * I controller WebXR sono sempre gli stessi oggetti tra una sessione e l'altra:
+ * si preparano una volta sola (prima raggi, pistole e ascoltatori si duplicavano).
+ */
+function ensureControllers(): void {
+  if (controllers.length) return;
+  for (let i = 0; i < 2; i++) {
+    const obj = renderer.xr.getController(i);
+    const ray = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -6)]),
+      new THREE.LineBasicMaterial({ color: C.green, transparent: true, opacity: 0.75 }),
+    );
+    const tip = new THREE.Mesh(new THREE.RingGeometry(0.03, 0.05, 4), new THREE.MeshBasicMaterial({ color: C.green, side: THREE.DoubleSide }));
+    tip.position.z = -6;
+    ray.add(tip);
+    ray.visible = false;
+    obj.add(ray);
+    // in VR il controller diventa una pistola laser (Kenney Space Kit), allineata al raggio di mira
+    const gun = instance(models, "gun");
+    gun.scale.setScalar(0.11);
+    gun.rotation.y = GUN_YAW;
+    gun.position.set(0, -0.04, 0.02);
+    obj.add(gun);
+    const entry: Controller = { obj, hand: i, held: false, pressed: false, ray, tip, gun, source: null };
+    obj.addEventListener("connected", (ev) => {
+      entry.source = (ev as unknown as { data: XRInputSource }).data ?? null;
+      ray.visible = true;
+    });
+    obj.addEventListener("disconnected", () => {
+      ray.visible = false;
+      entry.held = false;
+      entry.source = null;
+    });
+    obj.addEventListener("selectstart", () => {
+      entry.held = true;
+      entry.pressed = true;
+      sfx.unlock();
+    });
+    obj.addEventListener("selectend", () => (entry.held = false));
+    // tasto laterale (grip) = pausa
+    obj.addEventListener("squeezestart", () => {
+      if (game && (game.phase === "playing" || game.phase === "countdown")) game.setPaused(!game.paused);
+    });
+    controllers.push(entry);
+  }
+}
 let cardHover: CardAction | null = null;
 const cardRay = new THREE.Raycaster();
 
@@ -194,10 +254,11 @@ function buildScene(mode: Mode): void {
     mode,
     sfx,
     {
-      onStart: (player) => link.send({ t: "game:start", player }),
+      onStart: (player, id, startedAt) => link.sendReliable({ t: "game:start", player, id, startedAt }),
       onTick: (score, lives, combo, wave) => link.send({ t: "game:tick", score, lives, combo, wave }),
       onEvent: (kind, text) => link.send({ t: "game:event", kind, text }),
-      onEnd: (stats) => link.send({ t: "game:end", stats }),
+      onEnd: (stats, id, player, startedAt) => link.sendReliable({ t: "game:end", stats, id, player, startedAt }),
+      onPause: (paused) => link.send({ t: "game:pause", paused }),
       onAbort: () => link.send({ t: "game:abort" }),
       onFeedback: (kind, hand) => rumble(hand, ...RUMBLE[kind]),
     },
@@ -207,10 +268,11 @@ function buildScene(mode: Mode): void {
   game.setNextPlayer(pendingName);
   game.defaultName = label;
   if (currentTheme) game.setTheme(currentTheme);
+  game.setDifficulty(settings.difficulty);
+  applyStyle();
   if (mode === "desktop" || mode === "mobile") queueMicrotask(fitView);
   scene.add(game.root);
 
-  controllers.length = 0;
   hud = card = null;
   if (arrows) camera.remove(arrows.group);
   arrows = null;
@@ -221,48 +283,21 @@ function buildScene(mode: Mode): void {
     hud = new HudPanel(ar);
     card = new CardPanel(ar);
     scene.add(hud.mesh, card.mesh);
-    for (let i = 0; i < 2; i++) {
-      const obj = renderer.xr.getController(i);
-      const len = ar ? 2 : 6;
-      const ray = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -len)]),
-        new THREE.LineBasicMaterial({ color: C.green, transparent: true, opacity: 0.75 }),
-      );
-      const tip = new THREE.Mesh(
-        new THREE.RingGeometry(ar ? 0.008 : 0.03, ar ? 0.014 : 0.05, 4),
-        new THREE.MeshBasicMaterial({ color: C.green, side: THREE.DoubleSide }),
-      );
-      tip.position.z = -len;
-      ray.add(tip);
-      ray.visible = false;
-      obj.add(ray);
-      const entry: Controller = { obj, hand: i, held: false, pressed: false, ray, source: null };
-      obj.addEventListener("connected", (ev) => {
-        entry.source = (ev as unknown as { data: XRInputSource }).data ?? null;
-        ray.visible = true;
-      });
-      obj.addEventListener("disconnected", () => {
-        ray.visible = false;
-        entry.held = false;
-        entry.source = null;
-      });
-      obj.addEventListener("selectstart", () => {
-        entry.held = true;
-        entry.pressed = true;
-        sfx.unlock();
-      });
-      obj.addEventListener("selectend", () => (entry.held = false));
-      scene.add(obj);
-      controllers.push(entry);
-
-      // in VR il controller diventa una pistola laser (Kenney Space Kit), allineata al raggio di mira
-      if (mode === "vr") {
-        const gun = instance(models, "gun");
-        gun.scale.setScalar(0.11);
-        gun.rotation.y = GUN_YAW;
-        gun.position.set(0, -0.04, 0.02);
-        obj.add(gun);
-      }
+    // in VR si vedono gli altri piloti: tabellone a sinistra e navicelle fantasma in lontananza
+    othersPanel = wingmen = null;
+    if (mode === "vr") {
+      othersPanel = new OthersPanel();
+      wingmen = new Wingmen(models);
+      scene.add(othersPanel.mesh, wingmen.group);
+      renderOthers();
+    }
+    ensureControllers();
+    for (const c of controllers) {
+      // lunghezza del raggio e pistola in base alla modalità; i controller sono sempre gli stessi
+      c.ray.scale.z = ar ? 1 / 3 : 1;
+      c.tip.scale.setScalar(ar ? 0.3 : 1);
+      c.gun.visible = mode === "vr";
+      scene.add(c.obj);
     }
   }
 }
@@ -303,14 +338,39 @@ link.on((msg) => {
     case "watch":
       watched = msg.on;
       break;
+    case "settings":
+      settings = msg.settings;
+      game?.setDifficulty(settings.difficulty);
+      applyStyle();
+      break;
+    case "reload":
+      // dopo un aggiornamento l'operatore può ricaricare tutte le postazioni (mai a metà partita)
+      if (!game || game.phase === "lobby" || game.phase === "over") location.reload();
+      else reloadAfterGame = true;
+      break;
+    case "others":
+      others = msg.list;
+      renderOthers();
+      break;
   }
 });
 
 // fotogrammi per il monitor spettatore, solo quando qualcuno guarda
 setInterval(() => {
   if (!watched || !game) return;
-  if (game.phase === "playing" || game.phase === "countdown") link.send({ t: "game:frame", frame: game.frame() });
+  if (game.phase === "playing" || game.phase === "countdown")
+    link.send({ t: "game:frame", frame: { ...game.frame(), fps: Math.round(fpsAvg), fov: viewFov(), mode: game.mode, paused: game.paused } });
 }, 200);
+
+/** Fotogrammi al secondo (media mobile) e campo visivo verticale reale, per la scheda tecnica dello spettatore. */
+let fpsAvg = 60;
+function viewFov(): number {
+  if (renderer.xr.isPresenting) {
+    const cam = renderer.xr.getCamera().cameras[0];
+    if (cam) return Math.round((2 * Math.atan(1 / cam.projectionMatrix.elements[5]!) * 180) / Math.PI);
+  }
+  return Math.round(camera.fov);
+}
 
 // ---------------- interfaccia DOM (PC / telefono) ----------------
 
@@ -334,6 +394,15 @@ function startDesktop(): void {
   if (!game) return;
   sfx.unlock();
   const name = cleanName(ui.name.value);
+  // dal telefono il nome è obbligatorio (se l'operatore lo chiede): in classifica niente "Telefono 3F2"
+  if (game.phase === "lobby" && !name && !pendingName && basePlatform === "mobile" && settings.phoneNameRequired) {
+    ui.name.classList.remove("need");
+    void ui.name.offsetWidth;
+    ui.name.classList.add("need");
+    ui.name.placeholder = "prima il tuo nome!";
+    ui.name.focus();
+    return;
+  }
   if (name) game.setNextPlayer(name);
   ui.name.value = "";
   pendingName = null;
@@ -359,6 +428,12 @@ document.querySelector("#btn-menu")!.addEventListener("click", () => {
   game?.toLobby();
   ui.name.value = "";
 });
+ui.pauseBtn.addEventListener("click", () => game?.setPaused(true));
+document.querySelector("#btn-resume")!.addEventListener("click", () => game?.setPaused(false));
+document.querySelector("#btn-quit")!.addEventListener("click", () => {
+  game?.setPaused(false);
+  game?.forceEnd();
+});
 ui.name.addEventListener("keydown", (e) => {
   if (e.key === "Enter") startDesktop();
 });
@@ -378,7 +453,9 @@ function renderDom(vm: ViewModel): void {
   show(ui.count, !xr && vm.phase === "countdown");
   show(ui.over, !xr && vm.phase === "over");
   show(ui.hud, !xr && (vm.phase === "playing" || vm.phase === "countdown"));
-  show(ui.crosshair, !xr && !isTouch && vm.phase === "playing");
+  show(ui.crosshair, !xr && !isTouch && vm.phase === "playing" && !vm.paused);
+  show(ui.pauseBtn, !xr && vm.phase === "playing" && !vm.paused);
+  show(ui.pause, !xr && vm.paused);
   document.body.dataset.phase = vm.phase;
 
   if (vm.phase === "countdown") set(ui.count, String(Math.max(1, vm.countdown)));
@@ -446,6 +523,7 @@ window.addEventListener("keydown", (e) => {
     mouseAim.held = true;
   }
   if (e.code === "KeyM") ui.mute.click();
+  if ((e.code === "KeyP" || e.code === "Escape") && game && (game.phase === "playing" || game.phase === "countdown")) game.setPaused(!game.paused);
 });
 window.addEventListener("keyup", (e) => {
   if (e.code === "Space") mouseAim.held = false;
@@ -596,6 +674,11 @@ async function enterXr(kind: "vr" | "ar"): Promise<void> {
     renderer.xr.setFoveation(1);
     await document.fonts.ready;
     buildScene(sceneMode);
+    // visore tolto (Quest) o app in secondo piano: pausa, e dopo 10 s la partita si chiude
+    session.addEventListener("visibilitychange", () => {
+      const vis = session!.visibilityState;
+      away(vis !== "visible", 10_000);
+    });
     session.addEventListener("end", () => {
       if (game && (game.phase === "playing" || game.phase === "countdown")) game.forceEnd();
       platform = basePlatform;
@@ -658,6 +741,11 @@ function menuAction(hit: CardAction | null): void {
   if (!game) return;
   if (hit === "exit") {
     void renderer.xr.getSession()?.end();
+  } else if (hit === "resume") {
+    game.setPaused(false);
+  } else if (hit === "quit") {
+    game.setPaused(false);
+    game.forceEnd();
   } else if (hit === "menu") {
     game.toLobby();
     sfx.start();
@@ -666,7 +754,64 @@ function menuAction(hit: CardAction | null): void {
   }
 }
 
+// ---------------- stile grafico e altri piloti ----------------
+
+/** Stile scelto dall'operatore per questo tipo di dispositivo (o ?style=... per provarlo). */
+function applyStyle(): void {
+  if (!game) return;
+  const forced = params.get("style") as VisualStyle | null;
+  const style = forced && STYLES.includes(forced) ? forced : game.mode === "ar" ? settings.styleAr : game.mode === "vr" ? settings.styleVr : settings.styleScreen;
+  game.setStyle(style);
+}
+
+function renderOthers(): void {
+  othersPanel?.update(others);
+  wingmen?.set(others);
+  const esc = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  const box = document.querySelector<HTMLElement>("#lobby-live")!;
+  box.hidden = others.length === 0;
+  document.querySelector("#lobby-live-list")!.innerHTML = others
+    .slice(0, 5)
+    .map(
+      (o) =>
+        `<li><span class="lt-pos">${o.wave}</span><span class="lt-name">${esc(o.player.toUpperCase())}</span><span class="lt-via">${VIA[o.platform]}</span><span class="lt-pts">${String(o.score).padStart(6, "0")}</span></li>`,
+    )
+    .join("");
+  const hudOthers = document.querySelector("#hud-others")!;
+  hudOthers.textContent = others.length
+    ? `IN VOLO: ${others
+        .slice(0, 3)
+        .map((o) => `${o.player.toUpperCase()} ${o.score}`)
+        .join(" · ")}`
+    : "";
+}
+
 // ---------------- ciclo principale ----------------
+
+let reloadAfterGame = false;
+
+// ---------------- pausa e assenze ----------------
+
+/** Visore tolto, telefono bloccato, scheda nascosta: pausa, e dopo un po' la partita si chiude. */
+let awayTimer: ReturnType<typeof setTimeout> | null = null;
+function away(on: boolean, closeAfterMs: number): void {
+  if (awayTimer) clearTimeout(awayTimer);
+  awayTimer = null;
+  if (!game) return;
+  if (on) {
+    if (game.phase === "playing" || game.phase === "countdown") {
+      game.setPaused(true);
+      awayTimer = setTimeout(() => game?.forceEnd(), closeAfterMs);
+    }
+  } else {
+    link.reconnectSoon();
+    sfx.unlock();
+  }
+}
+document.addEventListener("visibilitychange", () => away(document.hidden, 20_000));
+window.addEventListener("pagehide", () => game?.forceEnd());
+window.addEventListener("blur", () => (mouseAim.held = false));
+window.addEventListener("pointercancel", () => (mouseAim.held = false));
 
 const timer = new THREE.Timer();
 const headPos = new THREE.Vector3();
@@ -676,7 +821,9 @@ let sway = 0;
 
 renderer.setAnimationLoop((time) => {
   timer.update(time);
-  const dt = Math.min(0.05, timer.getDelta());
+  const raw = timer.getDelta();
+  const dt = Math.min(0.05, raw);
+  if (raw > 0) fpsAvg += (1 / raw - fpsAvg) * 0.05;
   const xr = renderer.xr.isPresenting;
   const aimers: Aimer[] = [];
   if (!game) return;
@@ -686,7 +833,7 @@ renderer.setAnimationLoop((time) => {
     xrCam.getWorldPosition(headPos);
     xrCam.getWorldDirection(headDir);
     xrCam.getWorldQuaternion(headQuat);
-    const inMenu = game.phase === "lobby" || game.phase === "over";
+    const inMenu = game.phase === "lobby" || game.phase === "over" || game.paused;
     let hover: CardAction | null = null;
     for (const c of controllers) {
       if (!c.ray.visible) {
@@ -723,15 +870,18 @@ renderer.setAnimationLoop((time) => {
   const vm = game.view();
   const playing = vm.phase === "playing" || vm.phase === "countdown";
   // tema del livello: cielo, pianeta, colori degli asteroidi e musica
-  const theme = playing ? themeFor(vm.wave) : THEMES[0]!;
+  const theme = playing ? themeFor(vm.wave, BOSS_EVERY) : THEMES[0]!;
   if (theme !== currentTheme) {
     const first = currentTheme === null;
     currentTheme = theme;
     env?.backdrop.setTheme(theme, first);
     game.setTheme(theme);
-    if (!first && playing && theme.music !== "boss") sfx.jingle("wave");
+    if (!first && playing && theme.music !== "boss") sfx.levelUp();
   }
   env?.backdrop.update(dt);
+  wingmen?.update(dt);
+  // aggiornamento chiesto dall'operatore: si ricarica appena si torna al menu (mai in partita né nel visore)
+  if (reloadAfterGame && vm.phase === "lobby" && !xr) location.reload();
   game.warp = env?.backdrop.warp ?? 0;
   sfx.setMusic(playing ? theme.music : "lobby");
 
@@ -740,9 +890,10 @@ renderer.setAnimationLoop((time) => {
     else arrows.hide();
   }
   if (hud && card) {
-    hud.mesh.visible = vm.phase === "playing";
-    card.mesh.visible = vm.phase !== "playing";
-    if (vm.phase === "playing") {
+    const showHud = vm.phase === "playing" && !vm.paused;
+    hud.mesh.visible = showHud;
+    card.mesh.visible = !showHud;
+    if (showHud) {
       hud.update(vm);
       hud.place(headPos, headQuat, dt);
     } else {

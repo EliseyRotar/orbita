@@ -9,16 +9,22 @@
   <body class="spectator">
     <div id="stage"></div>
 
-    <header class="live-bar">
-      <span id="live-tag" class="live-tag">IN ATTESA</span>
-      <span id="live-player" class="live-player"></span>
-      <span id="live-meta" class="live-meta"></span>
-      <span id="live-score" class="live-score"></span>
-    </header>
+    <div id="grid-labels" class="grid-labels"></div>
 
-    <div id="boss" class="boss" hidden>
-      <span>BOSS</span>
-      <div class="boss-track"><div id="boss-bar"></div></div>
+    <div id="solo" class="solo" hidden>
+      <header class="live-bar">
+        <span id="live-tag" class="live-tag">IN ATTESA</span>
+        <span id="live-player" class="live-player"></span>
+        <span id="live-score" class="live-score"></span>
+      </header>
+      <aside class="spec-card" aria-label="Scheda tecnica">
+        <h2>SCHEDA TECNICA</h2>
+        <dl id="spec" class="spec"></dl>
+      </aside>
+      <div id="boss" class="boss" hidden>
+        <span>BOSS</span>
+        <div class="boss-track"><div id="boss-bar"></div></div>
+      </div>
     </div>
 
     <section id="idle" class="idle">
@@ -27,8 +33,19 @@
       <p class="idle-cta blink">CHIEDI UN VISORE ALLO STAND</p>
     </section>
 
+    <nav class="controls" aria-label="Vista">
+      <div class="seg">
+        <button type="button" data-layout="singola">SINGOLA</button>
+        <button type="button" data-layout="griglia">GRIGLIA</button>
+      </div>
+      <div class="seg shot">
+        <button type="button" data-shot="dietro">ALLE SPALLE</button>
+        <button type="button" data-shot="soggettiva">SOGGETTIVA</button>
+      </div>
+    </nav>
+
     <nav id="tabs" class="tabs" aria-label="Scegli la postazione da guardare"></nav>
-    <p class="auto-note" id="auto-note">la telecamera segue chi sta facendo più punti</p>
+    <p class="auto-note" id="auto-note"></p>
 
     <div class="scanlines" aria-hidden="true"></div>
     <script type="module" src="/src/client/spectator/main.ts"></script>

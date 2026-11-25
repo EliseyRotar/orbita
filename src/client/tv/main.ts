@@ -38,8 +38,28 @@ setInterval(() => lastSnap && renderDevices(lastSnap.devices, Date.now(), lastSn
 
 const pad = (n: number) => String(Math.max(0, Math.floor(n))).padStart(6, "0");
 
+/**
+ * Classifica: il miglior punteggio di ogni giocatore di oggi, da tutti i dispositivi
+ * (telefoni compresi). Se sono più di 10 le pagine scorrono da sole: la prima resta di più.
+ */
+const PAGE = 10;
+let page = 0;
+let shownPage = -1;
+let pageT = 0;
+setInterval(() => {
+  if (!lastSnap) return;
+  const pages = Math.max(1, Math.ceil(lastSnap.bestToday.length / PAGE));
+  pageT++;
+  if (pages === 1) page = 0;
+  else if (pageT >= (page === 0 ? 3 : 2)) {
+    pageT = 0;
+    page = (page + 1) % pages;
+  } else return;
+  renderLeaderboard(lastSnap.bestToday);
+}, 4000);
+
 function render(s: Snapshot): void {
-  renderLeaderboard(s.leaderboardToday);
+  renderLeaderboard(s.bestToday);
   const last = s.last;
   $("last").innerHTML = last
     ? `ULTIMA PARTITA <b>${esc(last.game.player.toUpperCase())}</b> ${pad(last.game.score)} <span>${last.rankToday ? `${last.rankToday}° OGGI` : ""} · ${VIA[last.game.platform]}</span>`
@@ -64,31 +84,47 @@ async function drawQr(id: string, url: string): Promise<void> {
 
 function renderLeaderboard(rows: GameRecord[]): void {
   const list = $("leaderboard");
-  const filled = Array.from({ length: 10 }, (_, i) => rows[i] ?? null);
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  if (page >= pages) page = 0;
+  const from = page * PAGE;
+  const top = rows[0]?.score || 1;
+  const filled = Array.from({ length: PAGE }, (_, i) => rows[from + i] ?? null);
   list.innerHTML = filled
-    .map((g, i) => {
-      const color = g ? ROW_COLORS[Math.min(i, 3)] : "var(--dim)";
-      return `<li class="row" style="color:${i < 4 ? color : g ? "var(--white)" : "var(--dim)"}">
-        <span class="pos">${ORD[i]}</span>
+    .map((g, k) => {
+      const i = from + k;
+      const color = !g ? "var(--dim)" : i < 4 ? ROW_COLORS[i]! : "var(--white)";
+      const bar = g ? Math.max(0.02, g.score / top).toFixed(3) : 0;
+      return `<li class="row ${g ? "" : "empty"}" style="color:${color};--bar:${bar}">
+        <span class="pos">${ORD[i] ?? `${i + 1}TH`}</span>
         <span class="name">${g ? esc(g.player.toUpperCase()) : "---"}</span>
         <span class="pts">${g ? pad(g.score) : "000000"}</span>
-        <span class="via">${g ? VIA[g.platform] : ""}</span>
+        <span class="via v-${g?.platform ?? ""}">${g ? VIA[g.platform] : ""}</span>
       </li>`;
     })
     .join("");
+  // animazione solo al cambio pagina, non a ogni aggiornamento dei punti
+  if (shownPage !== page) {
+    shownPage = page;
+    list.classList.remove("flip");
+    void list.offsetWidth;
+    list.classList.add("flip");
+  }
+  $("hs-page").textContent = rows.length > PAGE ? `${from + 1}-${Math.min(rows.length, from + PAGE)} DI ${rows.length} · PAG ${page + 1}/${pages}` : rows.length ? `${rows.length} PILOTI OGGI` : "";
 }
 
 function renderDevices(devices: DeviceInfo[], now: number, phones: Snapshot["phones"]): void {
   const list = $("devices");
-  const visible = devices.filter((d) => d.online);
-  const phoneRow = phones.playing
-    ? `<li class="dev live"><span class="dev-label">TELEFONI</span><span class="dev-who">${phones.playing} IN GIOCO DAL QR</span></li>`
+  // visori e PC sempre; i telefoni solo mentre giocano
+  const visible = devices.filter((d) => d.online && (d.platform !== "mobile" || d.live));
+  const extra = phones.online - devices.filter((d) => d.platform === "mobile" && d.online && d.live).length;
+  const phoneRow = extra > 0
+    ? `<li class="dev"><span class="dev-label">TELEFONI</span><span class="dev-who">${phones.online} COLLEGATI DAL QR</span></li>`
     : "";
   if (visible.length === 0) {
     list.innerHTML = `<li class="dev idle"><span>nessun visore collegato</span></li>${phoneRow}`;
     return;
   }
-  list.innerHTML = phoneRow + visible
+  list.innerHTML = visible
     .map((d) => {
       const live = d.live;
       const who = live ? live.player.toUpperCase() : d.nextPlayer ? `${d.nextPlayer.toUpperCase()} SI PREPARA` : "LIBERO";
@@ -101,7 +137,7 @@ function renderDevices(devices: DeviceInfo[], now: number, phones: Snapshot["pho
         ${right}
       </li>`;
     })
-    .join("");
+    .join("") + phoneRow;
 }
 
 function renderTotals(s: Snapshot): void {

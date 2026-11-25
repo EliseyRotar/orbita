@@ -42,6 +42,10 @@
           <h2 id="lt-title" class="lt-title">HIGH SCORES OGGI</h2>
           <ol id="lobby-top" class="lt-list"><li class="lt-empty">ancora nessuno: il primo posto è tuo</li></ol>
         </section>
+        <section id="lobby-live" class="lobby-top live" aria-labelledby="ll-title" hidden>
+          <h2 id="ll-title" class="lt-title">IN VOLO ADESSO</h2>
+          <ol id="lobby-live-list" class="lt-list"></ol>
+        </section>
       </form>
 
       <dl class="howto">
@@ -60,6 +64,7 @@
         <span id="hud-player" class="hud-player">1UP</span>
         <output id="hud-score" class="hud-score">000000</output>
         <span id="hud-wave" class="hud-wave">ONDATA 1</span>
+        <span id="hud-others" class="hud-others"></span>
       </div>
       <div class="hud-right">
         <span id="hud-lives" class="lives" aria-label="Vite"></span>
@@ -71,7 +76,17 @@
         <div class="boss-track"><div id="hud-boss-bar"></div></div>
       </div>
     </header>
+    <button id="btn-pause" type="button" class="pause-btn" aria-label="Pausa" hidden>II</button>
     <p id="toast" class="toast" data-on="false" aria-live="polite"></p>
+
+    <section id="pause" class="pause" hidden aria-labelledby="pause-title">
+      <p id="pause-title" class="go pause-title">PAUSA</p>
+      <p class="pause-sub">la partita è ferma: riprendi quando vuoi</p>
+      <div class="over-actions">
+        <button id="btn-resume" type="button" class="btn primary">RIPRENDI</button>
+        <button id="btn-quit" type="button" class="btn">TERMINA PARTITA</button>
+      </div>
+    </section>
 
     <section id="over" class="over" hidden>
       <p class="go">GAME OVER</p>

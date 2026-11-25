@@ -1,4 +1,4 @@
-import type { GameRecord, GameStats, Platform, Totals } from "../shared/protocol.ts";
+import type { GameRecord, GameStats, Platform, Settings, Totals } from "../shared/protocol.ts";
 
 /** Giorno corrente (YYYY-MM-DD) nel fuso orario della fiera. */
 export function fairDay(at = Date.now()): string {
@@ -50,6 +50,18 @@ export class Records {
       .slice(0, limit);
   }
 
+  /** Classifica con una sola riga per giocatore (la sua partita migliore). */
+  bestPerPlayer(day: string | null, limit: number): GameRecord[] {
+    const best = new Map<string, GameRecord>();
+    for (const g of this.games) {
+      if (day !== null && g.day !== day) continue;
+      const key = g.player.trim().toLowerCase();
+      const cur = best.get(key);
+      if (!cur || g.score > cur.score || (g.score === cur.score && g.endedAt < cur.endedAt)) best.set(key, g);
+    }
+    return [...best.values()].sort((a, b) => b.score - a.score || a.endedAt - b.endedAt).slice(0, limit);
+  }
+
   recent(limit: number): GameRecord[] {
     return this.games.slice(-limit).reverse();
   }
@@ -80,6 +92,19 @@ export class Records {
     }
     return t;
   }
+
+  protected storedSettings: Partial<Settings> = {};
+
+  loadSettings(): Partial<Settings> {
+    return this.storedSettings;
+  }
+
+  saveSettings(s: Settings): void {
+    this.storedSettings = s;
+    this.settingsSaved(s);
+  }
+
+  protected settingsSaved(_s: Settings): void {}
 
   /** Chiamato dopo ogni modifica: le sottoclassi salvano. */
   protected saved(_rec: GameRecord, _op: "add" | "remove" | "rename"): void {}

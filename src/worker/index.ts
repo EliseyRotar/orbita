@@ -46,6 +46,7 @@ export class Fair extends DurableObject<Env> {
     server.accept();
     const conn = this.hub.connect({
       send: (data) => server.send(data),
+      close: () => server.close(1008, "troppi messaggi"),
       get open() {
         return server.readyState === WebSocket.READY_STATE_OPEN;
       },

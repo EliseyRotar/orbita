@@ -21,6 +21,7 @@ export const MODEL_FILES = {
   enemyB: "craft_speederB.glb",
   enemyC: "craft_speederD.glb",
   boss: "craft_miner.glb",
+  wingman: "craft_racer.glb",
   gun: "weapon_gun.glb",
   deck: "platform_large.glb",
   dish: "satelliteDish_detailed.glb",
@@ -44,6 +45,27 @@ function normalize(root: THREE.Object3D, keepBase = false): THREE.Object3D {
   return holder;
 }
 
+/**
+ * Scarica un file con tempo massimo e nuovi tentativi: su un hotspot lento una richiesta
+ * può restare appesa per sempre e il gioco non partirebbe mai.
+ */
+async function fetchRetry(url: string, tries = 4): Promise<ArrayBuffer> {
+  for (let i = 1; ; i++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000 * i);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok) throw new Error(`${res.status} ${url}`);
+      return await res.arrayBuffer();
+    } catch (err) {
+      if (i >= tries) throw err;
+      await new Promise((r) => setTimeout(r, 500 * i));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
 let modelsPromise: Promise<Models> | null = null;
 
 /** Carica (una volta sola) tutti i modelli. */
@@ -54,7 +76,7 @@ export function loadModels(onProgress?: (done: number, total: number) => void): 
   let done = 0;
   modelsPromise = Promise.all(
     names.map(async (name) => {
-      const gltf = await loader.loadAsync(`${BASE}models/${MODEL_FILES[name]}`);
+      const gltf = await loader.parseAsync(await fetchRetry(`${BASE}models/${MODEL_FILES[name]}`), "");
       gltf.scene.traverse((o) => {
         const m = o as THREE.Mesh;
         if (m.isMesh) {
@@ -94,7 +116,11 @@ export function tintable(obj: THREE.Object3D): THREE.MeshStandardMaterial[] {
 }
 
 export async function loadSky(): Promise<THREE.Texture> {
-  const tex = await new THREE.TextureLoader().loadAsync(`${BASE}sky/milkyway.jpg`);
+  // il cielo non è indispensabile: se tarda troppo si gioca su sfondo nero
+  const tex = await Promise.race([
+    new THREE.TextureLoader().loadAsync(`${BASE}sky/milkyway.jpg`),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("cielo in ritardo")), 20000)),
+  ]);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.mapping = THREE.EquirectangularReflectionMapping;
   return tex;

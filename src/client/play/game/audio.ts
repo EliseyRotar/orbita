@@ -18,7 +18,6 @@ const SFX = {
   damage: ["error_006"],
   start: ["select_005"],
   alarm: ["glitch_003"],
-  jingleWave: ["jingle_wave"],
   jingleOver: ["jingle_over"],
   jingleRecord: ["jingle_record"],
 } as const;
@@ -45,7 +44,8 @@ export class Sfx {
       this.master.connect(this.ctx.destination);
       this.loading = this.loadAll();
     }
-    if (this.ctx.state === "suspended") void this.ctx.resume();
+    // su iPhone dopo un blocco schermo lo stato è "interrupted": si riprende comunque
+    if (this.ctx.state !== "running") void this.ctx.resume().catch(() => {});
     if (this.music?.paused && !this.muted) void this.music.play().catch(() => {});
   }
 
@@ -125,7 +125,13 @@ export class Sfx {
     if (track === this.musicTrack) return;
     this.musicTrack = track;
     const old = this.music;
-    if (old) this.fade(old, 0, 900, () => old.pause());
+    if (old)
+      this.fade(old, 0, 900, () => {
+        old.pause();
+        // libera la memoria del brano vecchio
+        old.removeAttribute("src");
+        old.load();
+      });
     this.music = null;
     if (!track) return;
     const a = new Audio(`/media/music/${track}.mp3`);
@@ -137,24 +143,57 @@ export class Sfx {
   }
 
   private fade(a: HTMLAudioElement, to: number, ms: number, done?: () => void): void {
+    // setInterval e non requestAnimationFrame: in VR il browser sospende l'animazione della pagina
     const from = a.volume;
     const t0 = performance.now();
-    const step = () => {
+    const id = setInterval(() => {
       const k = Math.min(1, (performance.now() - t0) / ms);
       try {
         a.volume = from + (to - from) * k;
       } catch {
         /* iOS non permette di cambiare il volume: pazienza */
       }
-      if (k < 1) requestAnimationFrame(step);
-      else done?.();
+      if (k >= 1) {
+        clearInterval(id);
+        done?.();
+      }
+    }, 50);
+  }
+
+  /**
+   * Livello superato: arpeggio in maggiore che sale (do-mi-sol-do) e accordo finale,
+   * sintetizzato al volo. Il vecchio jingle suonava come una sconfitta.
+   */
+  levelUp(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.master || this.muted) return;
+    const t0 = ctx.currentTime + 0.02;
+    const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5];
+    const out = ctx.createGain();
+    out.gain.value = 0.22;
+    out.connect(this.master);
+    const tone = (freq: number, at: number, len: number, type: OscillatorType, vol: number) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(freq, at);
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime(vol, at + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.001, at + len);
+      o.connect(g).connect(out);
+      o.start(at);
+      o.stop(at + len + 0.05);
     };
-    requestAnimationFrame(step);
+    notes.forEach((f, i) => tone(f, t0 + i * 0.075, 0.16, "square", 0.5));
+    const end = t0 + notes.length * 0.075;
+    for (const f of [1046.5, 1318.5, 1567.98]) tone(f, end, 0.75, "triangle", 0.55);
+    tone(2093, end, 0.5, "square", 0.18);
+    this.play("power", 0.35, 1.5);
   }
 
   /** Jingle 8-bit (Kenney "Music Jingles", CC0). */
-  jingle(name: "wave" | "over" | "record"): void {
-    this.play(name === "wave" ? "jingleWave" : name === "over" ? "jingleOver" : "jingleRecord", 0.7);
+  jingle(name: "over" | "record"): void {
+    this.play(name === "over" ? "jingleOver" : "jingleRecord", 0.7);
   }
 
   toggleMute(): void {

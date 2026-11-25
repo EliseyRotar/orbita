@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import { ENT, type EntityKind, type FrameEntity, type GameFrame, type GameStats } from "../../../shared/protocol.ts";
-import { instance, tint, type ModelName, type Models } from "../../common/assets.ts";
+import { instance, type ModelName, type Models } from "../../common/assets.ts";
 import type { Theme } from "./themes.ts";
+import type { Difficulty, VisualStyle } from "../../../shared/protocol.ts";
+import { Skinner } from "./skins.ts";
 import type { Sfx } from "./audio.ts";
 import { Sparks } from "./fx.ts";
 import { C } from "./palette.ts";
@@ -60,6 +62,11 @@ interface Mine {
 interface Boss {
   group: THREE.Group;
   ring: THREE.Mesh;
+  core: THREE.Mesh;
+  shieldT: number;
+  shieldOn: boolean;
+  escorts: boolean;
+  phase: number;
   hp: number;
   max: number;
   index: number;
@@ -74,6 +81,7 @@ const OVER_LOCK = 3;
 const ENEMY_LIFETIME = 16;
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
+const tmp2 = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 /** Modelli possibili per ogni tipo di asteroide ("proc" = forma generata al momento). */
 const ROCK_MODELS: Record<R.RockKind, (ModelName | "proc")[]> = {
@@ -154,6 +162,72 @@ export class Game {
   private overT = 0;
   /** Tempo di ricarica separato per ogni mano: si spara con due pistole insieme. */
   private fireCd = new Map<number, number>();
+  /** Difficoltà scelta dall'operatore (vale dalla prossima ondata o partita). */
+  private difficulty: Difficulty = R.NORMAL;
+  private bossCoreGeo = new THREE.IcosahedronGeometry(1, 1);
+  private bossCoreMat: THREE.Material = new THREE.MeshBasicMaterial({ color: C.yellow });
+  private bossRingGeo = new THREE.TorusGeometry(5.2, 0.16, 6, 48);
+  private bossBarGeo = new THREE.PlaneGeometry(5, 0.32);
+  private bossBarMat = new THREE.MeshBasicMaterial({ color: C.pink, side: THREE.DoubleSide });
+  /** Schegge delle esplosioni (riusate, mai create a metà partita). */
+  private shards: { mesh: THREE.Mesh; vel: THREE.Vector3; spin: THREE.Vector3; t: number }[] = [];
+  private shardGeo = new THREE.TetrahedronGeometry(1, 0);
+
+  setDifficulty(d: Difficulty): void {
+    this.difficulty = d;
+  }
+
+  /** Stile grafico (neon, realistico, ologramma): vale per gli oggetti che nascono da ora. */
+  private skinner: Skinner;
+  get style(): VisualStyle {
+    return this.skinner.style;
+  }
+  setStyle(style: VisualStyle): void {
+    if (style !== this.skinner.style) this.skinner = new Skinner(style, this.scale);
+  }
+
+  /** Esplosione con schegge vere che volano via girando e svaniscono. */
+  private debris(at: THREE.Vector3, color: number, count: number, speed: number): void {
+    const s = this.scale;
+    for (let n = 0; n < count; n++) {
+      let d = this.shards.find((x) => !x.mesh.visible);
+      if (!d) {
+        if (this.shards.length >= 90) return;
+        d = {
+          mesh: new THREE.Mesh(this.shardGeo, new THREE.MeshBasicMaterial({ color, transparent: true })),
+          vel: new THREE.Vector3(),
+          spin: new THREE.Vector3(),
+          t: 0,
+        };
+        this.shards.push(d);
+        this.root.add(d.mesh);
+      }
+      (d.mesh.material as THREE.MeshBasicMaterial).color.setHex(color);
+      d.mesh.visible = true;
+      d.mesh.position.copy(at);
+      d.mesh.scale.setScalar((0.12 + Math.random() * 0.22) * s);
+      d.vel.randomDirection().multiplyScalar(speed * (0.4 + Math.random()));
+      d.spin.set(Math.random() * 10, Math.random() * 10, Math.random() * 10);
+      d.t = 0.7 + Math.random() * 0.4;
+    }
+  }
+
+  private updateShards(dt: number): void {
+    for (const d of this.shards) {
+      if (!d.mesh.visible) continue;
+      d.t -= dt;
+      if (d.t <= 0) {
+        d.mesh.visible = false;
+        continue;
+      }
+      d.mesh.position.addScaledVector(d.vel, dt);
+      d.vel.multiplyScalar(Math.exp(-1.5 * dt));
+      d.mesh.rotation.x += d.spin.x * dt;
+      d.mesh.rotation.y += d.spin.y * dt;
+      (d.mesh.material as THREE.MeshBasicMaterial).opacity = Math.min(1, d.t * 2);
+    }
+  }
+
   /** Nome usato se nessuno scrive il proprio: il nome della postazione. */
   defaultName = "Ospite";
   /** Mano dell'ultimo colpo andato a segno (per far vibrare il controller giusto). */
@@ -190,6 +264,7 @@ export class Game {
     const ar = mode === "ar";
     this.scale = ar ? 0.2 : 1;
     const s = this.scale;
+    this.skinner = new Skinner(ar ? "ologramma" : mode === "vr" ? "realistico" : "neon", s);
 
     this.sparks = new Sparks(ar ? 0.025 : 0.13);
     // campo visivo dei visori: HoloLens 2 circa 43°×29°, Quest 2 circa 90°.
@@ -251,7 +326,7 @@ export class Game {
     }
     // proporzioni leggermente diverse su ogni asse
     obj.children[0]?.scale.multiply(new THREE.Vector3(0.8 + Math.random() * 0.4, 0.8 + Math.random() * 0.4, 0.8 + Math.random() * 0.4));
-    if (kind !== "gold") tint(obj, this.rockTint);
+    this.skinner.skin(obj, kind === "gold" ? "gold" : "rock", this.rockTint);
     return obj;
   }
 
@@ -360,12 +435,37 @@ export class Game {
 
   // ---------------- ciclo ----------------
 
+  /** Codice e inizio (ms epoch) della partita in corso: servono al server per non perderla. */
+  gameId = "";
+  startedEpoch = 0;
+  paused = false;
+
+  /** Mette in pausa o riprende (solo durante una partita). */
+  setPaused(on: boolean): void {
+    if (this.phase !== "playing" && this.phase !== "countdown") on = false;
+    if (on === this.paused) return;
+    this.paused = on;
+    this.cb.onPause?.(on);
+  }
+
+  /** Partita in corso, per ripresentarsi al server dopo una riconnessione. */
+  current(): { id: string; player: string; startedAt: number; score: number; lives: number; wave: number } | null {
+    if (this.phase !== "playing" && this.phase !== "countdown") return null;
+    return { id: this.gameId, player: this.player, startedAt: this.startedEpoch, score: this.score, lives: this.lives, wave: this.wave };
+  }
+
   update(dt: number, headPos: THREE.Vector3, headDir: THREE.Vector3, aimers: Aimer[]): void {
     this.head.copy(headPos);
     this.headDir.copy(headDir);
+    if (this.paused) {
+      this.updateEffects(0);
+      return;
+    }
     this.sparks.update(dt);
+    this.skinner.update(dt);
     this.updateEffects(dt);
     this.updateFx(dt);
+    this.updateShards(dt);
 
     if (this.phase === "countdown") {
       this.countdown -= dt;
@@ -418,7 +518,10 @@ export class Game {
     this.countdown = COUNTDOWN;
     this.phase = "countdown";
     this.sfx.start();
-    this.cb.onStart(this.player);
+    this.gameId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    this.startedEpoch = Date.now();
+    this.paused = false;
+    this.cb.onStart(this.player, this.gameId, this.startedEpoch);
   }
 
   private play(dt: number, aimers: Aimer[]): void {
@@ -429,17 +532,18 @@ export class Game {
     if (!this.boss && this.waveT >= R.WAVE_SECONDS) this.nextWave();
 
     this.spawnIn -= dt;
-    const interval = R.spawnInterval(this.wave) * (this.boss ? 3 : 1);
+    const d = this.difficulty;
+    const interval = R.spawnInterval(this.wave, d) * (this.boss ? 1.6 : 1);
     if (this.spawnIn <= 0) {
-      const wantEnemy = !this.boss && this.enemies.length < R.maxEnemies(this.wave) && Math.random() < R.enemyChance(this.wave);
+      const wantEnemy = !this.boss && this.enemies.length < R.maxEnemies(this.wave, d) && Math.random() < R.enemyChance(this.wave, d);
       if (wantEnemy) this.spawnEnemy();
-      else if (this.rocks.length < R.maxRocks(this.wave)) this.spawnRock(R.pickRock(this.wave));
+      else if (this.rocks.length < R.maxRocks(this.wave, d)) this.spawnRock(R.pickRock(this.wave, Math.random, d));
       this.spawnIn = interval * (0.7 + Math.random() * 0.6);
     }
 
     for (const a of aimers) {
       const cd = (this.fireCd.get(a.hand) ?? 0) - dt;
-      if (a.pressed || (a.held && cd <= 0)) {
+      if ((a.pressed || a.held) && cd <= 0) {
         this.fire(a);
         this.fireCd.set(a.hand, R.FIRE_INTERVAL);
       } else {
@@ -474,10 +578,14 @@ export class Game {
    */
   private followGaze(dt: number): void {
     if (this.desktop) return;
-    const want = v1.set(this.headDir.x, 0, this.headDir.z);
-    if (want.lengthSq() < 1e-4) return;
-    want.normalize();
-    this.forward.lerp(want, 1 - Math.exp(-0.7 * dt)).normalize();
+    if (this.headDir.x * this.headDir.x + this.headDir.z * this.headDir.z < 1e-4) return;
+    // si ruota l'angolo (non si mescolano i vettori): niente salti se ci si gira di 180°
+    const cur = Math.atan2(this.forward.x, -this.forward.z);
+    const want = Math.atan2(this.headDir.x, -this.headDir.z);
+    let d = want - cur;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    const yaw = cur + d * (1 - Math.exp(-0.7 * dt));
+    this.forward.set(Math.sin(yaw), 0, -Math.cos(yaw));
     this.right.crossVectors(this.forward, UP).normalize();
   }
 
@@ -553,7 +661,7 @@ export class Game {
       .copy(this.head)
       .addScaledVector(this.right, (Math.random() - 0.5) * 0.9 * s)
       .addScaledVector(UP, (Math.random() - 0.5) * 0.6 * s);
-    const vel = target.sub(pos).normalize().multiplyScalar(R.rockSpeed(this.wave) * spec.speed * s);
+    const vel = target.sub(pos).normalize().multiplyScalar(R.rockSpeed(this.wave, this.difficulty) * spec.speed * s);
     if (at) vel.addScaledVector(this.right, (Math.random() - 0.5) * 3 * s);
     this.rocks.push({
       id: this.nextId++,
@@ -600,6 +708,7 @@ export class Game {
     const s = this.scale;
     const obj = instance(this.models, ENEMY_MODELS[Math.floor(Math.random() * ENEMY_MODELS.length)]!);
     obj.scale.setScalar(R.ENEMY.radius * s);
+    this.skinner.skin(obj, "enemy");
     const e: Enemy = {
       id: this.nextId++,
       obj,
@@ -642,8 +751,8 @@ export class Game {
       }
       e.fireIn -= dt;
       if (e.fireIn <= 0 && e.t > 3 && e.t < ENEMY_LIFETIME - 3) {
-        e.fireIn = R.enemyFireInterval(this.wave);
-        this.spawnMine(e.obj.position, 6);
+        e.fireIn = R.enemyFireInterval(this.wave, this.difficulty);
+        this.spawnMine(e.obj.position, R.mineSpeed(this.wave, this.difficulty) * 0.85);
         this.sfx.enemyShoot();
       }
       if (e.t > ENEMY_LIFETIME) {
@@ -668,6 +777,7 @@ export class Game {
     this.sfx.explode(true);
     this.fb("kill");
     this.shockwave(e.obj.position, C.pink, R.ENEMY.radius * this.scale * 3);
+    this.debris(e.obj.position, 0xd8dce4, 10, 8 * this.scale);
     this.root.remove(e.obj);
     this.enemies.splice(i, 1);
     this.enemyKills++;
@@ -683,6 +793,9 @@ export class Game {
       let bolt = this.bolts.find((b) => !b.alive);
       if (!bolt) {
         bolt = { id: 0, hand: -1, mesh: new THREE.Mesh(this.boltGeo, this.boltMat), vel: new THREE.Vector3(), life: 0, alive: false };
+        const g = this.skinner.glow(C.cyan, 0.9);
+        g.position.z = 0.5 * this.scale;
+        bolt.mesh.add(g);
         this.bolts.push(bolt);
         this.root.add(bolt.mesh);
       }
@@ -762,7 +875,8 @@ export class Game {
         return true;
       }
     }
-    if (this.boss && hitSphere(this.boss.group.position, 3.6 * s)) {
+    // solo il nucleo del boss è vulnerabile
+    if (this.boss && hitSphere(this.boss.core.getWorldPosition(tmp2), 2.4 * s)) {
       this.damageBoss();
       return true;
     }
@@ -785,6 +899,7 @@ export class Game {
     this.sfx.explode(r.kind === "large");
     this.fb("kill");
     this.shockwave(pos, r.kind === "gold" ? C.green : C.yellow, r.radius * 3);
+    this.debris(pos, r.kind === "gold" ? C.green : 0xb08a70, r.kind === "large" ? 12 : 6, 6 * this.scale);
     this.removeRock(i);
     this.kills++;
     this.registerKill(R.ROCK[r.kind].points);
@@ -819,7 +934,7 @@ export class Game {
 
   private grantPower(): void {
     const options: PowerKind[] = ["triple", "slow", "shield", "double"];
-    if (this.lives < R.MAX_LIVES) options.push("life", "life");
+    if (this.lives < R.MAX_LIVES) options.push("life");
     const kind = options[Math.floor(Math.random() * options.length)]!;
     this.sfx.power();
     this.fb("power", -1);
@@ -838,6 +953,8 @@ export class Game {
   }
 
   private takeDamage(): void {
+    // due colpi nello stesso istante non devono chiudere la partita due volte
+    if (this.phase !== "playing") return;
     if (this.hasPower("shield")) {
       this.powers = this.powers.filter((p) => p.kind !== "shield");
       this.sfx.shieldHit();
@@ -861,65 +978,121 @@ export class Game {
     const hull = instance(this.models, "boss");
     hull.scale.setScalar(4.2 * s);
     hull.rotation.y = Math.PI;
+    this.skinner.skin(hull, "boss");
     group.add(hull);
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(5.2 * s, 0.14 * s, 6, 48),
-      new THREE.MeshBasicMaterial({ color: C.pink }),
-    );
+    // nucleo luminoso: è il punto debole, l'unico che si può colpire
+    const core = new THREE.Mesh(this.bossCoreGeo, this.bossCoreMat);
+    core.scale.setScalar(0.85 * s);
+    core.position.z = 2.2 * s;
+    const halo = this.skinner.glow(C.yellow, 2.4);
+    halo.scale.divideScalar(0.85 * s);
+    core.add(halo);
+    group.add(core);
+    const ring = new THREE.Mesh(this.bossRingGeo, new THREE.MeshBasicMaterial({ color: C.pink, transparent: true, opacity: 0.9 }));
+    ring.scale.setScalar(s);
     group.add(ring);
-    const bar = new THREE.Mesh(
-      new THREE.PlaneGeometry(5 * s, 0.32 * s),
-      new THREE.MeshBasicMaterial({ color: C.pink, side: THREE.DoubleSide }),
-    );
+    const bar = new THREE.Mesh(this.bossBarGeo, this.bossBarMat);
+    bar.scale.setScalar(s);
     bar.position.y = 4.6 * s;
     group.add(bar);
     group.position.copy(this.dirFrom(0, 0.2, new THREE.Vector3()).multiplyScalar(42 * s).add(this.anchor));
     this.root.add(group);
-    const max = R.bossHp(index);
-    this.boss = { group, ring, hp: max, max, index, t: 0, fireIn: 2.5, flash: 0, bar };
+    const max = R.bossHp(index, this.difficulty);
+    this.boss = { group, ring, core, hp: max, max, index, t: 0, fireIn: 2.5, flash: 0, bar, shieldT: 5, shieldOn: false, escorts: false, phase: 1 };
     this.cb.onEvent("boss", "è arrivato il boss!");
   }
 
+  /**
+   * Il boss ha tre fasi (in base alla vita rimasta) e uno scudo che si chiude ogni tanto:
+   * - fase 1: si avvicina e lancia mine;
+   * - fase 2 (sotto 2/3): mine a ventaglio e si sposta di più;
+   * - fase 3 (sotto 1/3): chiama due navicelle di scorta e spara più spesso;
+   * - dopo 35 s si infuria e spara il doppio.
+   */
   private updateBoss(dt: number): void {
     const b = this.boss;
     if (!b) return;
     const s = this.scale;
     b.t += dt;
-    const dist = Math.max(22, 42 - b.t * 6) * s;
-    const az = Math.sin(b.t * 0.45) * Math.min(0.55, this.cone.az * 0.8);
+    const ratio = b.hp / b.max;
+    b.phase = ratio < 1 / 3 ? 3 : ratio < 2 / 3 ? 2 : 1;
+    const swing = Math.min(b.phase >= 2 ? 0.75 : 0.5, this.cone.az * (b.phase >= 2 ? 1 : 0.8));
+    const dist = Math.max(20, 42 - b.t * 6) * s;
+    const az = Math.sin(b.t * (b.phase >= 2 ? 0.8 : 0.45)) * swing;
     const el = 0.22 + Math.sin(b.t * 0.7) * 0.08;
     b.group.position.copy(this.dirFrom(az, el, v1).multiplyScalar(dist).add(this.anchor));
     b.group.lookAt(this.head);
-    b.ring.rotation.z += dt * 1.5;
-    b.bar.scale.x = Math.max(0.001, b.hp / b.max);
+    b.bar.scale.x = Math.max(0.001, ratio) * s;
+
+    // scudo: per 2 s ogni 7 s i colpi rimbalzano; 1 s prima l'anello lampeggia
+    b.shieldT -= dt;
+    const ringMat = b.ring.material as THREE.MeshBasicMaterial;
+    if (b.shieldOn) {
+      b.ring.scale.setScalar(s * 0.62);
+      b.ring.rotation.z += dt * 6;
+      ringMat.color.setHex(C.cyan);
+      if (b.shieldT <= 0) {
+        b.shieldOn = false;
+        b.shieldT = 7;
+      }
+    } else {
+      b.ring.scale.setScalar(s);
+      b.ring.rotation.z += dt * 1.5;
+      const warn = b.shieldT < 1 && Math.floor(b.shieldT * 10) % 2 === 0;
+      ringMat.color.setHex(warn ? C.white : C.pink);
+      if (b.shieldT <= 0) {
+        b.shieldOn = true;
+        b.shieldT = 2;
+      }
+    }
+    (this.bossCoreMat as THREE.MeshBasicMaterial).color.setHex(b.shieldOn ? C.cyan : b.flash > 0 ? C.white : C.yellow);
+
     if (b.flash > 0) {
       b.flash -= dt;
       b.group.scale.setScalar(1 + Math.max(0, b.flash) * 0.6);
     }
+    if (b.phase === 3 && !b.escorts) {
+      b.escorts = true;
+      this.spawnEnemy();
+      this.spawnEnemy();
+      this.showToast("ARRIVA LA SCORTA!");
+    }
     b.fireIn -= dt;
-    if (b.fireIn <= 0 && b.t > 3) {
-      b.fireIn = R.mineInterval(b.index);
-      this.spawnMine(b.group.position, 5.5);
+    if (b.fireIn <= 0 && b.t > 2.5) {
+      const enraged = b.t > 35;
+      b.fireIn = R.mineInterval(b.index, this.difficulty) * (b.phase === 3 ? 0.7 : 1) * (enraged ? 0.5 : 1);
+      const speed = R.mineSpeed(this.wave, this.difficulty);
+      if (b.phase >= 2) {
+        for (const off of [-0.3, 0, 0.3]) this.spawnMine(b.group.position, speed, off);
+      } else {
+        this.spawnMine(b.group.position, speed);
+      }
     }
   }
 
   private damageBoss(): void {
     const b = this.boss!;
+    if (b.shieldOn) {
+      // scudo chiuso: il colpo rimbalza
+      this.sparks.burst(b.core.getWorldPosition(v1), C.cyan, 4, 3 * this.scale);
+      this.sfx.shieldHit();
+      return;
+    }
     b.hp--;
     b.flash = 0.06;
     this.sfx.hit();
     this.fb("hit");
-    this.sparks.burst(b.group.position, C.yellow, 5, 4 * this.scale);
+    this.sparks.burst(b.core.getWorldPosition(v1), C.yellow, 5, 4 * this.scale);
     if (b.hp > 0) return;
     const pos = b.group.position.clone();
     this.sparks.burst(pos, C.pink, 140, 15 * this.scale);
     this.sparks.burst(pos, C.yellow, 140, 9 * this.scale);
+    this.debris(pos, C.pink, 24, 3 * this.scale);
     this.sfx.explode(true);
     this.fb("boss", -1);
     this.shockwave(pos, C.pink, 12 * this.scale);
     this.shockwave(pos, C.yellow, 8 * this.scale);
-    this.root.remove(b.group);
-    this.boss = null;
+    this.removeBoss();
     this.bossesBeaten++;
     this.score += R.bossReward(b.index) * (this.hasPower("double") ? 2 : 1);
     for (const m of this.mines) if (m.alive) this.killMine(m);
@@ -928,10 +1101,20 @@ export class Game {
     this.nextWave();
   }
 
-  private spawnMine(from: THREE.Vector3, speed: number): void {
+  /** Toglie il boss liberando il materiale dell'anello (le geometrie sono condivise). */
+  private removeBoss(): void {
+    if (!this.boss) return;
+    this.root.remove(this.boss.group);
+    (this.boss.ring.material as THREE.Material).dispose();
+    this.boss = null;
+  }
+
+  private spawnMine(from: THREE.Vector3, speed: number, spread = 0): void {
     let m = this.mines.find((x) => !x.alive);
     if (!m) {
       m = { id: 0, mesh: new THREE.Mesh(this.mineGeo, this.mineMat), vel: new THREE.Vector3(), alive: false };
+      // alone rosa: i colpi nemici si vedono bene anche contro lo sfondo luminoso
+      m.mesh.add(this.skinner.glow(C.pink, 1.7));
       this.mines.push(m);
       this.root.add(m.mesh);
     }
@@ -939,7 +1122,9 @@ export class Game {
     m.alive = true;
     m.mesh.visible = true;
     m.mesh.position.copy(from);
-    m.vel.copy(this.head).sub(from).normalize().multiplyScalar(speed * this.scale);
+    m.vel.copy(this.head).sub(from).normalize();
+    if (spread) m.vel.applyAxisAngle(UP, spread);
+    m.vel.multiplyScalar(speed * this.scale);
   }
 
   private moveMines(dt: number): void {
@@ -980,8 +1165,7 @@ export class Game {
     this.result = { stats, player: this.player, rankToday: null, rankAll: null, isRecord: false };
     if (this.boss) {
       this.sparks.burst(this.boss.group.position, C.cyan, 40, 6 * this.scale);
-      this.root.remove(this.boss.group);
-      this.boss = null;
+      this.removeBoss();
     }
     for (const e of this.enemies) {
       this.sparks.burst(e.obj.position, C.cyan, 20, 4 * this.scale);
@@ -991,7 +1175,8 @@ export class Game {
     for (const m of this.mines) if (m.alive) this.killMine(m);
     this.sfx.over();
     this.sfx.jingle("over");
-    this.cb.onEnd(stats);
+    this.paused = false;
+    this.cb.onEnd(stats, this.gameId, this.player, this.startedEpoch);
   }
 
   private clearField(): void {
@@ -1000,9 +1185,9 @@ export class Game {
     this.enemies = [];
     for (const b of this.bolts) this.killBolt(b);
     for (const m of this.mines) this.killMine(m);
-    if (this.boss) this.root.remove(this.boss.group);
-    this.boss = null;
+    this.removeBoss();
     this.sparks.clear();
+    for (const d of this.shards) d.mesh.visible = false;
   }
 
   // ---------------- effetti, interfaccia, spettatore ----------------
@@ -1045,6 +1230,7 @@ export class Game {
       boss: this.boss ? { hp: this.boss.hp, max: this.boss.max } : null,
       result: this.result,
       lockout: this.phase === "over" ? Math.max(0, OVER_LOCK - this.overT) : 0,
+      paused: this.paused,
       online: this.online,
     };
   }

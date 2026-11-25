@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { accuracy } from "../../../shared/protocol.ts";
+import { accuracy, type OtherPilot } from "../../../shared/protocol.ts";
 import { CSS, PIXEL, TERMINAL } from "./palette.ts";
 import { POWER_LABEL, type ViewModel } from "./types.ts";
 
@@ -131,7 +131,7 @@ export class HudPanel extends CanvasPanel {
 }
 
 /** Schermate grandi: attesa, conto alla rovescia, risultato. */
-export type CardAction = "play" | "menu" | "exit";
+export type CardAction = "play" | "menu" | "exit" | "resume" | "quit";
 
 interface CardButton {
   id: CardAction;
@@ -187,10 +187,17 @@ export class CardPanel extends CanvasPanel {
 
   update(vm: ViewModel, hover: CardAction | null = null): void {
     const r = vm.result;
-    const key = [vm.phase, vm.nextPlayer, vm.countdown, vm.player, r?.stats.score, r?.rankToday, r?.isRecord, Math.ceil(vm.lockout), vm.online, hover].join("|");
+    const key = [vm.phase, vm.paused, vm.nextPlayer, vm.countdown, vm.player, r?.stats.score, r?.rankToday, r?.isRecord, Math.ceil(vm.lockout), vm.online, hover].join("|");
     this.redraw(key, () => {
       this.buttons = [];
-      if (vm.phase === "countdown") {
+      if (vm.paused) {
+        this.frameBox(0, 0, 1024, 720, CSS.cyan);
+        this.title("PAUSA", 512, 170, 96, CSS.cyan, CSS.pink);
+        this.text(`${vm.player.toUpperCase()}: ${pad(vm.score)} PUNTI`, 512, 270, 30, CSS.yellow, PIXEL, "center");
+        this.text("tasto laterale del controller = pausa", 512, 350, 40, CSS.grey, TERMINAL, "center");
+        this.button({ id: "resume", label: "RIPRENDI", x: 60, y: 430, w: 520, h: 120, enabled: true }, hover === "resume", true);
+        this.button({ id: "quit", label: "TERMINA", x: 620, y: 430, w: 344, h: 120, enabled: true }, hover === "quit", false);
+      } else if (vm.phase === "countdown") {
         this.frameBox(0, 0, 1024, 720, CSS.yellow);
         this.title(String(Math.max(1, vm.countdown)), 512, 440, 280, CSS.yellow, CSS.pink);
         this.text(`PRONTI, ${vm.player.toUpperCase()}`, 512, 620, 56, CSS.white, TERMINAL, "center");
@@ -225,6 +232,41 @@ export class CardPanel extends CanvasPanel {
         this.button({ id: "exit", label: "ESCI", x: 660, y: 450, w: 304, h: 120, enabled: true }, hover === "exit", false);
         this.text(vm.online ? "il punteggio va nella classifica della fiera" : "server non collegato: punteggio non salvato", 512, 650, 38, vm.online ? CSS.grey : CSS.pink, TERMINAL, "center");
       }
+    });
+  }
+}
+
+const VIA = { desktop: "PC", vr: "QUEST", ar: "HOLOLENS", mobile: "TELEFONO" } as const;
+
+/**
+ * "Altri piloti in volo": tabellone fisso a sinistra del giocatore (in VR), con chi sta
+ * giocando in quel momento sugli altri dispositivi. Si guarda, non si tocca.
+ */
+export class OthersPanel extends CanvasPanel {
+  constructor() {
+    super(640, 440, 0.95, { dist: 0, drop: 0, speed: 0 });
+    // fisso nella stanza: a sinistra, un po' davanti, girato verso il giocatore
+    this.mesh.position.set(-1.55, 1.45, -1.35);
+    this.mesh.rotation.y = 0.85;
+    this.update([]);
+  }
+
+  update(list: OtherPilot[]): void {
+    const key = list.map((o) => `${o.id}:${o.player}:${o.score}:${o.wave}:${o.lives}`).join("|");
+    this.redraw(key || "vuoto", () => {
+      this.frameBox(0, 0, 640, 440, CSS.pink);
+      this.text("ALTRI PILOTI IN VOLO", 320, 58, 22, CSS.pink, PIXEL, "center");
+      if (!list.length) {
+        this.text("nessun altro in volo", 320, 230, 40, "#777", TERMINAL, "center");
+        this.text("per ora il cielo è tuo", 320, 275, 40, "#777", TERMINAL, "center");
+        return;
+      }
+      list.slice(0, 5).forEach((o, i) => {
+        const y = 118 + i * 66;
+        this.text(o.player.toUpperCase().slice(0, 12), 36, y, 22, CSS.yellow);
+        this.text(`${VIA[o.platform]} · ONDATA ${o.wave} · ${"♥".repeat(Math.max(0, o.lives))}`, 36, y + 32, 30, CSS.cyan, TERMINAL);
+        this.text(pad(o.score), 604, y, 22, CSS.white, PIXEL, "right");
+      });
     });
   }
 }

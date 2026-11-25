@@ -8,56 +8,125 @@
   </head>
   <body class="admin">
     <header class="bar">
-      <h1>ORBITA <span>operatore</span></h1>
+      <h1>ORBITA <span>sala comandi</span></h1>
       <span id="conn" class="conn" data-online="false">Collegamento…</span>
+      <dl id="stats" class="stats"></dl>
       <nav class="links">
-        <a href="/monitor" target="_blank" rel="noopener">Monitor classifica</a>
-        <a href="/spettatore" target="_blank" rel="noopener">Monitor spettatore</a>
-        <a href="/" target="_blank" rel="noopener">Apri il gioco</a>
+        <a href="/monitor" target="_blank" rel="noopener">Classifica ↗</a>
+        <a href="/spettatore" target="_blank" rel="noopener">Spettatore ↗</a>
+        <a href="/" target="_blank" rel="noopener">Gioco ↗</a>
       </nav>
     </header>
 
     <form id="pin-form" class="pin" hidden>
-      <label>PIN operatore <input id="pin" type="password" inputmode="numeric" autocomplete="off" /></label>
+      <h2>Accesso operatore</h2>
+      <label>PIN <input id="pin" type="password" inputmode="numeric" autocomplete="off" /></label>
       <button class="btn primary">Entra</button>
       <p id="pin-error" class="error"></p>
     </form>
 
-    <main id="app" class="layout">
-      <section class="col">
-        <h2>Postazioni</h2>
-        <p class="hint">Scrivi il nome del ragazzo e premi Invio: comparirà sul visore. Lui preme il grilletto e parte.</p>
-        <div id="devices" class="devices"></div>
-        <p id="phones" class="hint phones"></p>
-      </section>
+    <div id="app">
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="devices" aria-selected="true">Postazioni <b id="tab-live"></b></button>
+        <button role="tab" data-tab="board" aria-selected="false">Classifica</button>
+        <button role="tab" data-tab="settings" aria-selected="false">Difficoltà e grafica</button>
+        <button role="tab" data-tab="tools" aria-selected="false">Strumenti</button>
+      </nav>
 
-      <section class="col side">
-        <h2>Coda</h2>
-        <form id="queue-form" class="inline">
-          <input id="queue-name" maxlength="18" placeholder="Nome in coda" autocomplete="off" />
-          <button class="btn">Aggiungi</button>
-        </form>
-        <ol id="queue" class="queue"></ol>
+      <!-- POSTAZIONI -->
+      <main id="tab-devices" class="panel layout">
+        <section>
+          <div class="section-head">
+            <h2>Postazioni</h2>
+            <p class="hint">Scrivi il nome del ragazzo e premi Invio: comparirà sul visore. Lui preme il grilletto e parte.</p>
+          </div>
+          <div id="devices" class="devices"></div>
+        </section>
+        <aside class="side">
+          <div class="box">
+            <h2>Coda</h2>
+            <form id="queue-form" class="inline">
+              <input id="queue-name" maxlength="18" placeholder="Nome in coda" autocomplete="off" />
+              <button class="btn">Aggiungi</button>
+            </form>
+            <ol id="queue" class="queue"></ol>
+          </div>
+          <div class="box">
+            <h2>Telefoni dei visitatori</h2>
+            <p id="phones" class="hint"></p>
+          </div>
+          <div class="box">
+            <h2>Cronaca</h2>
+            <ol id="feed" class="feed"></ol>
+          </div>
+        </aside>
+      </main>
 
-        <h2>Ultime partite</h2>
-        <p class="hint">Un nome inadatto? Correggilo o elimina la partita.</p>
+      <!-- CLASSIFICA -->
+      <main id="tab-board" class="panel" hidden>
+        <div class="section-head row">
+          <div>
+            <h2>Classifica di oggi</h2>
+            <p class="hint">Il miglior punteggio di ogni giocatore, da qualsiasi dispositivo (telefoni compresi).</p>
+          </div>
+          <div class="seg" role="group" aria-label="Periodo">
+            <button data-board="today" aria-pressed="true">Oggi · migliori</button>
+            <button data-board="recent" aria-pressed="false">Ultime partite</button>
+            <button data-board="all" aria-pressed="false">Di sempre</button>
+          </div>
+          <input id="board-filter" class="filter" placeholder="Cerca nome…" autocomplete="off" />
+          <button id="csv" class="btn">Scarica CSV</button>
+        </div>
         <table class="games">
           <thead>
-            <tr><th>Giocatore</th><th>Punti</th><th>Dove</th><th></th></tr>
+            <tr><th>#</th><th>Giocatore</th><th class="num">Punti</th><th>Dove</th><th class="num">Ondata</th><th class="num">Precisione</th><th>Quando</th><th></th></tr>
           </thead>
           <tbody id="games"></tbody>
         </table>
+      </main>
 
-        <h2>Messaggio sul monitor</h2>
-        <form id="info-form" class="inline">
-          <input id="info-text" maxlength="120" placeholder="Es. Alle 11 presentazione in sala B" autocomplete="off" />
-          <button class="btn">Pubblica</button>
-        </form>
+      <!-- DIFFICOLTÀ E GRAFICA -->
+      <main id="tab-settings" class="panel settings" hidden>
+        <section class="box">
+          <h2>Difficoltà</h2>
+          <p class="hint">Vale per tutti i dispositivi dalla prossima ondata. "Normale" diventa impegnativa già dalla seconda ondata.</p>
+          <div id="presets" class="presets"></div>
+          <div id="sliders" class="sliders"></div>
+          <p class="hint small">Muovendo un cursore la difficoltà diventa <b>personalizzata</b>. 1,00 = normale.</p>
+        </section>
+        <section class="box">
+          <h2>Stile grafico</h2>
+          <p class="hint">Si applica ai nuovi asteroidi e navicelle, anche a partita in corso.</p>
+          <div id="styles" class="styles"></div>
+          <h2>Telefoni</h2>
+          <label class="switch"><input id="phone-name" type="checkbox" /> <span>Nome obbligatorio per giocare dal telefono</span></label>
+        </section>
+      </main>
 
-        <h2>Indirizzi</h2>
-        <p class="hint">Sui visori apri: <code id="play-url"></code><br />Sull'HoloLens, alla prima partita Edge chiede il permesso per la vista immersiva: premi "Consenti".</p>
-      </section>
-    </main>
+      <!-- STRUMENTI -->
+      <main id="tab-tools" class="panel settings" hidden>
+        <section class="box">
+          <h2>Messaggio sul monitor</h2>
+          <form id="info-form" class="inline">
+            <input id="info-text" maxlength="120" placeholder="Es. Alle 11 presentazione in sala B" autocomplete="off" />
+            <button class="btn">Pubblica</button>
+          </form>
+          <h2>Indirizzi</h2>
+          <p class="hint">Sui visori e sui telefoni apri: <code id="play-url"></code><br />Sull'HoloLens, alla prima partita Edge chiede il permesso per la vista immersiva: premi "Consenti".</p>
+        </section>
+        <section class="box danger-zone">
+          <h2>Comandi per tutte le postazioni</h2>
+          <div class="big-actions">
+            <button id="stop-all" class="btn danger">Termina tutte le partite</button>
+            <p class="hint small">I punteggi vengono salvati.</p>
+            <button id="reload-all" class="btn">Ricarica tutte le postazioni</button>
+            <p class="hint small">Dopo un aggiornamento del sito. Chi sta giocando si ricarica a fine partita.</p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script type="module" src="/src/client/admin/main.ts"></script>
   </body>

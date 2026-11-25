@@ -49,16 +49,20 @@ export interface ViewModel {
   toast: string | null;
   boss: { hp: number; max: number } | null;
   result: ResultInfo | null;
+  /** Partita in pausa. */
+  paused: boolean;
   /** In "over": secondi prima di poter ripartire (evita ripartenze accidentali). */
   lockout: number;
   online: boolean;
 }
 
 export interface GameCallbacks {
-  onStart(player: string): void;
+  onStart(player: string, id: string, startedAt: number): void;
   onTick(score: number, lives: number, combo: number, wave: number): void;
   onEvent(kind: FeedKind, text: string): void;
-  onEnd(stats: GameStats): void;
+  onEnd(stats: GameStats, id: string, player: string, startedAt: number): void;
+  /** La partita è stata messa in pausa o ripresa. */
+  onPause?(paused: boolean): void;
   /** Partita annullata prima di iniziare (non finisce in classifica). */
   onAbort(): void;
   /** Vibrazione: hand = -1 per entrambe le mani. */

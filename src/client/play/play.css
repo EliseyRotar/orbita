@@ -408,6 +408,44 @@ body[data-phase="playing"] #stage {
   visibility: visible;
 }
 
+/* ---------- pausa ---------- */
+
+.pause-btn {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  z-index: 46;
+  width: 56px;
+  height: 56px;
+  transform: translateX(-50%);
+  font-family: var(--pixel);
+  font-size: 18px;
+  color: var(--cyan);
+  background: rgba(0, 0, 0, 0.6);
+  border: 3px solid var(--cyan);
+  cursor: pointer;
+}
+.pause {
+  position: fixed;
+  inset: 0;
+  z-index: 47;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 18px;
+  padding: 24px;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.8);
+}
+.pause-title {
+  color: var(--cyan);
+  text-shadow: 0.08em 0.08em 0 var(--pink);
+}
+.pause-sub {
+  margin: 0 0 12px;
+  font-size: 30px;
+}
+
 /* ---------- fine partita ---------- */
 
 .over {
@@ -785,4 +823,37 @@ body[data-phase="countdown"] .device {
   body[data-phase="over"] .device {
     display: none;
   }
+}
+
+/* altri piloti in partita in questo momento */
+.lobby-top.live .lt-title {
+  color: var(--pink, #ff3d7f);
+}
+.lobby-top.live .lt-title::before {
+  content: "● ";
+  animation: blink 1s steps(2, start) infinite;
+}
+.hud-others {
+  font-family: VT323, monospace;
+  font-size: 18px;
+  color: #ff3d7f;
+  letter-spacing: 0.04em;
+  opacity: 0.9;
+}
+.hud-others:empty {
+  display: none;
+}
+
+/* nome mancante (telefono): il campo trema e si colora */
+.field input.need {
+  border-color: var(--pink);
+  animation: shake 0.35s steps(4) 1;
+}
+.field input.need::placeholder {
+  color: var(--pink);
+}
+@keyframes shake {
+  25% { transform: translateX(-8px); }
+  50% { transform: translateX(8px); }
+  75% { transform: translateX(-4px); }
 }
